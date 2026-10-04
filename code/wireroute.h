@@ -58,11 +58,16 @@ A better readable way of define this is:
 int start_x, start_y, end_x, end_y, bend1_x, bend1_y, bend2_x, bend2_y, bend3_x,
 bend3_y; but this might not be the most efficient way to define the solution
 space for a wire with <= 3 bends.
-*/
+*/ /// DONE ? can revisit later for further optimizations maybe
 struct Wire {
   /* Define the data structure for wire here. */
-  int start_x, start_y, end_x, end_y, mid_x, mid_y;
-  bool move_x_start, move_x_end;
+  // int start_x, start_y, end_x, end_y, mid_x, mid_y;
+  // bool move_x_start, move_x_end;
+  struct {
+    int x;
+    int y;
+  } pts[MAX_PTS_PER_WIRE]; // start/endpoint and bend coordinates
+  int num_pts; 
   validate_wire_t to_validate_format(void) const;
 };
 

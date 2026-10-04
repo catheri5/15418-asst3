@@ -1,6 +1,6 @@
 /**
  * Parallel VLSI Wire Routing via OpenMP
- * Name 1(andrew_id 1), Name 2(andrew_id 2)
+ * Jason Tang (jasont2), Catherine Li (catheri5)
  */
 
 #include "wireroute.h"
@@ -84,6 +84,16 @@ void write_output(
   out_wires.close();
 }
 
+/*** HELPER FUNCTIONS ****/
+
+// minimal baseline version
+long long Wire::calculate_wire_cost_min(
+  const std::vector<std::vector<int>> &occupancy) {
+    long long cost = 0;
+    for (int i = 1; i < num_pts; i++) {
+      if 
+    }
+  }
 
 int main(int argc, char *argv[]) {
   const auto init_start = std::chrono::steady_clock::now();
@@ -160,12 +170,21 @@ int main(int argc, char *argv[]) {
 
   // TODO (student code start): Read the wire information from file, 
   // you may need to change this if you define the wire structure differently.
+  // INITIAL ROUTE 
   for (auto &wire : wires) {
-    fin >> wire.start_x >> wire.start_y >> wire.end_x >> wire.end_y;
-    wire.move_x_start = true;
-    wire.move_x_end = false;
-    wire.mid_x = wire.end_x;
-    wire.mid_y = wire.start_y;
+    int start_x, start_y, end_x, end_y;
+    fin >> start_x >> start_y >> end_x >> end_y;
+    wire.pts[0] = {start_x, start_y};
+
+    // Handle straight line case (no duplicate)
+    if (start_x == end_x || start_y == end_y) {
+      wire.num_pts = 2;
+      wire.pts[1] = {end_x, end_y};
+    } else { // Initialize path to 1 bend
+      wire.num_pts = 3;
+      wire.pts[1] = {end_x, start_y}; // x axis first
+      wire.pts[2] = {end_x, end_y};
+    }
   }
 
   /* Initialize any additional data structures needed in the algorithm */
@@ -213,10 +232,14 @@ int main(int argc, char *argv[]) {
 
 /* TODO (student): implement to_validate_format to convert Wire to
   validate_wire_t keypoint representation in order to run checker and
-  write output
+  write output /// DONE 
 */
 validate_wire_t Wire::to_validate_format(void) const {
   validate_wire_t w;
-  
+  w.num_pts = num_pts;
+  for (int i = 0; i < num_pts; i++) {
+    w.p[i].x = pts[i].x;
+    w.p[i].y = pts[i].y;
+  }
   return w;
 }
