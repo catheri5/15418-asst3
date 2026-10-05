@@ -280,29 +280,21 @@ int main(int argc, char *argv[]) {
 
   // TODO (student code start): Read the wire information from file, 
   // you may need to change this if you define the wire structure differently.
-  // INITIAL ROUTE 
+
+  // Store endpoints during initialization. Initial route selection happens in
+  // the computation phase so it is included in computation timing.
   for (auto &wire : wires) {
     int start_x, start_y, end_x, end_y;
     fin >> start_x >> start_y >> end_x >> end_y;
+    wire.num_pts = 2;
     wire.pts[0] = {start_x, start_y};
-
-    // Handle straight line case (no duplicate)
-    if (start_x == end_x || start_y == end_y) {
-      wire.num_pts = 2;
-      wire.pts[1] = {end_x, end_y};
-    } else { // Initialize path to 1 bend
-      wire.num_pts = 3;
-      wire.pts[1] = {end_x, start_y}; // x axis first
-      wire.pts[2] = {end_x, end_y};
-    }
-
-    add_wire_to_occupancy(wire, occupancy, 1);
+    wire.pts[1] = {end_x, end_y};
   }
 
   /* Initialize any additional data structures needed in the algorithm */
   // W-WIRE OPTIMIZATION KNOBS
   // multiplier to num_threads before work is split in parallel
-  const int W_WIRE_PARALLEL_THRESHOLD_MULTIPLIER = 8; 
+  const int W_WIRE_PARALLEL_THRESHOLD_MULTIPLIER = 4; 
   const int W_WIRE_CHUNK_SIZE = 8;
 
   // Student code end
@@ -322,7 +314,23 @@ int main(int argc, char *argv[]) {
   */
   omp_set_num_threads(num_threads);
   
-  // initialize wires
+  // Initialize legal starting routes and build occupancy
+  for (auto &wire : wires) {
+    Point start = wire.pts[0];
+    Point end = wire.pts[1];
+
+    if (start.x == end.x || start.y == end.y) {
+      wire.num_pts = 2;
+      wire.pts[1] = end;
+    } else {
+      wire.num_pts = 3;
+      wire.pts[1] = {end.x, start.y}; // x axis first
+      wire.pts[2] = end;
+    }
+
+    add_wire_to_occupancy(wire, occupancy, 1);
+  }
+
   std::mt19937 rng(0);
   std::uniform_real_distribution<double> route_choice_dist(0.0, 1.0);
 
@@ -368,7 +376,7 @@ int main(int argc, char *argv[]) {
               long long local_best_cost = best_cost;
               Wire local_best_route = best;
 
-              #pragma omp for schedule(dynamic, W_WIRE_CHUNK_SIZE) 
+              #pragma omp for schedule(static, W_WIRE_CHUNK_SIZE) 
               for (int r = 0; r < (int)routes.size(); r++) {
                 long long candidate_cost = 
                  calculate_wire_cost_minimal(routes[r], occupancy); 

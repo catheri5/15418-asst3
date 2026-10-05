@@ -74,16 +74,18 @@ PSC experiments, the same design will need to expose enough work to scale toward
 
 \subsection{Preliminary Within-Wires Tuning}
 
-We initially collected a small set of static and dynamic scheduling timings, but
-we removed those results from the report after discovering that the command-line
-thread count was parsed but not yet passed to OpenMP with
-\texttt{omp\_set\_num\_threads(num\_threads)}.  Since those runs do not provide a
-valid comparison between 1-thread and 8-thread execution, we treat them only as a
-diagnostic step.  The within-wires schedule and threshold experiments will be
-rerun after this fix.
+For early within-wires tuning, we temporarily measured only the iterative
+rerouting phase, excluding initial route placement and occupancy initialization.
+This narrower timing made it easier to isolate the effect of scheduling, chunk
+size, and threshold choices.  Final benchmark results use the assignment timing
+definition, where computation time includes initial route placement.
 
-Table~\ref{tab:ww-schedule-corrected-prelim} shows the first corrected
-static/dynamic comparison after applying the thread-count fix.  These runs use
+We omitted a small set of earlier exploratory timings that used an outdated
+timing and run configuration.  The tables below use the corrected tuning setup
+and are the runs used to guide the current within-wires design choices.
+
+Table~\ref{tab:ww-schedule-corrected-prelim} shows a static/dynamic comparison
+for the current within-wires implementation.  These runs use
 8 threads, $P=0$, 5 iterations, a threshold multiplier of 8, and chunk size 8.
 Computation time still excludes initial route placement and occupancy
 initialization.
@@ -109,6 +111,88 @@ small.  This suggests that schedule choice alone is not the dominant factor for
 the current within-wires implementation.  The small cost difference on the
 medium input is likely due to schedule-dependent tie-breaking among equal-cost
 candidate routes.
+
+We next swept the threshold multiplier controlling when route scoring switches
+from sequential to parallel.  Table~\ref{tab:ww-threshold-prelim} shows the
+result for the medium input with static scheduling, 8 threads, $P=0$, and 5
+iterations.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{r r r r r}
+\hline
+Threshold Mult. & Init (s) & Compute (s) & Max Occ. & Cost \\
+\hline
+2 & 0.0277333960 & 4.6140986040 & 2 & 266415 \\
+4 & 0.0261910380 & 4.6017672650 & 2 & 266415 \\
+8 & 0.0277792250 & 4.6910999480 & 2 & 266415 \\
+16 & 0.0278667380 & 4.7385649950 & 2 & 266415 \\
+32 & 0.0276994070 & 4.6931010690 & 2 & 266415 \\
+\hline
+\end{tabular}
+\caption{Preliminary within-wires threshold multiplier sweep on GHC for \texttt{medium\_wires.txt}. All runs used static scheduling and passed validation.}
+\label{tab:ww-threshold-prelim}
+\end{table}
+
+The threshold multiplier has only a modest impact in this experiment.  A
+multiplier of 4 was fastest, but the differences are small enough that this knob
+does not appear to dominate performance for the current medium-input run.
+
+We also swept static scheduling chunk sizes using the same medium input and
+threshold multiplier 4.  The chunk-size results varied by only a few percent and
+were somewhat noisy across repeated runs.  Because chunk size did not appear to
+be a dominant performance lever, we kept chunk size 8 as a stable middle-ground
+choice for subsequent within-wires experiments rather than overfitting to one
+noisy timing run.
+
+
+\subsection{Within-Wires Design Discussion}
+
+Our first within-wires design kept the outer loop over wires sequential and
+parallelized only the exhaustive route search for the current wire.  This choice
+matches the structure of the algorithm: after the current wire is removed from
+the occupancy matrix, all candidate routes for that wire can be evaluated
+independently while only reading the shared occupancy matrix.  We initially used
+a simple sequential baseline for both modes, then added OpenMP parallelism inside
+the route-scoring loop.
+
+Inside the parallel route-scoring loop, each thread maintains a private best
+route and cost.  After the OpenMP loop finishes, the main thread reduces these
+per-thread bests to select the final route for the wire.  This design avoids
+synchronization in the inner scoring loop: threads read the same route list and
+occupancy matrix, but they do not update shared best-route state while scoring.
+Conceptually, this is similar to using a reduction for an accumulated sum: each
+thread accumulates its own partial result independently, and the partial results
+are combined only once at the end.  In our case the reduction operator is
+``choose the lower-cost route'' rather than addition.  This exposes more of the
+route-scoring loop to parallel execution than having every candidate route
+compare against and update a single shared current best.
+The only shared update for the wire is the sequential removal of the old route
+before scoring and insertion of the chosen route afterward.
+
+We considered static and dynamic scheduling, thresholding the number of routes
+required before entering the parallel path, and changing the OpenMP chunk size.
+The preliminary tuning results showed that these knobs had only modest impact.
+Static scheduling was slightly faster than dynamic in the corrected comparison,
+a threshold multiplier of 4 was the best of the tested values, and chunk size did
+not materially change performance.  Based on these results, we chose static
+scheduling with a threshold multiplier of 4 and chunk size 8 as a stable
+configuration for further within-wires measurements.
+
+We do not expect perfect speedup from this approach.  The outer loop over wires
+remains sequential, route generation and final best-route reduction are also
+sequential for each wire, and a new OpenMP parallel region is entered for many
+wire searches.  In addition, candidate scoring performs many reads from the
+occupancy matrix, so cache behavior and memory bandwidth can limit scaling.
+Some wires also expose fewer candidate routes than others, so the amount of
+available route-level parallelism varies over the execution.
+
+At high thread counts, we expect within-wires scaling to eventually flatten or
+possibly drop off.  The number of candidate routes for a single wire limits the
+maximum useful parallelism for that wire, while parallel-region overhead and
+memory-system pressure increase with more threads.  The GHC experiments focus on
+1, 2, 4, and 8 threads; higher-thread behavior will be evaluated more directly
+in the PSC scaling experiments.
 
 \section{Planned Across-Wires Parallelism}
 
