@@ -1,0 +1,6 @@
+{
+  "clangd.arguments": [
+    "--query-driver=/usr/bin/g++"
+  ],
+  "C_Cpp.intelliSenseEngine": "disabled"
+}

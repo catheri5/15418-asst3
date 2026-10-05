@@ -11,6 +11,7 @@
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <initializer_list>
 #include <iostream>
 #include <random>
 #include <string>
@@ -86,14 +87,122 @@ void write_output(
 
 /*** HELPER FUNCTIONS ****/
 
-// minimal baseline version
-long long Wire::calculate_wire_cost_min(
-  const std::vector<std::vector<int>> &occupancy) {
-    long long cost = 0;
-    for (int i = 1; i < num_pts; i++) {
-      if 
+static Wire make_wire_from_points(std::initializer_list<Point> points) {
+  Wire wire;
+  wire.num_pts = 0;
+
+  for (const Point &point : points) {
+    if (wire.num_pts > 0 && 
+        wire.pts[wire.num_pts - 1].x == point.x &&
+        wire.pts[wire.num_pts - 1].y == point.y) {
+      continue;
+    }
+
+    wire.pts[wire.num_pts++] = point;
+  }
+
+  return wire;
+}
+
+void add_wire_to_occupancy(const Wire &wire,
+                           std::vector<std::vector<int>> &occupancy,
+                           int delta) {
+  for (int i = 1; i < wire.num_pts; i++) {
+    int x = wire.pts[i - 1].x;
+    int y = wire.pts[i - 1].y;
+    const int end_x = wire.pts[i].x;
+    const int end_y = wire.pts[i].y;
+
+    const int dx = (end_x > x) ? 1 : (end_x < x) ? -1 : 0;
+    const int dy = (end_y > y) ? 1 : (end_y < y) ? -1 : 0;
+
+    while (x != end_x || y != end_y) {
+      occupancy[y][x] += delta;
+      x += dx;
+      y += dy;
+    }
+
+    if (i == wire.num_pts - 1) {
+      occupancy[y][x] += delta;
     }
   }
+}
+
+long long calculate_wire_cost_minimal(
+    const Wire &wire,
+    const std::vector<std::vector<int>> &occupancy) {
+
+  long long cost = 0;
+
+  for (int i = 1; i < wire.num_pts; i++) {
+    int x = wire.pts[i - 1].x;
+    int y = wire.pts[i - 1].y;
+    int end_x = wire.pts[i].x;
+    int end_y = wire.pts[i].y;
+
+    // One segment only lies either vertically or horizontally
+    int dx = (end_x > x) ? 1 : (end_x < x) ? -1 : 0;
+    int dy = (end_y > y) ? 1 : (end_y < y) ? -1 : 0;
+
+    while (x != end_x || y != end_y) {
+      long long occ = occupancy[y][x] + 1;
+      cost += occ * occ;
+      x += dx;
+      y += dy;
+    }
+
+    if (i == wire.num_pts - 1) {
+      long long occ = occupancy[y][x] + 1;
+      cost += occ * occ;
+    }
+  }
+
+  return cost;
+}
+
+std::vector<Wire> generate_routes(Point start, Point end) {
+  std::vector<Wire> routes;
+
+  if (start.x == end.x || start.y == end.y) {
+    routes.push_back(make_wire_from_points({start, end}));
+    return routes;
+  }
+
+  int min_x = std::min(start.x, end.x);
+  int max_x = std::max(start.x, end.x);
+  int min_y = std::min(start.y, end.y);
+  int max_y = std::max(start.y, end.y);
+
+  // Horizontal-first routes with at most two bends
+  for (int x = min_x; x <= max_x; x++) {
+    if (x == start.x) {
+      continue;
+    }
+    routes.push_back(
+      make_wire_from_points({start, {x, start.y}, {x, end.y}, end}));
+  }
+
+  // Vertical-first routes with at most two bends
+  for (int y = min_y; y <= max_y; y++) {
+    if (y == start.y) {
+      continue;
+    }
+    routes.push_back(
+      make_wire_from_points({start, {start.x, y}, {end.x, y}, end}));
+  }
+
+  // Exactly three-bend routes through each interior point
+  for (int x = min_x + 1; x < max_x; x++) {
+    for (int y = min_y + 1; y < max_y; y++) {
+      routes.push_back(make_wire_from_points(
+          {start, {x, start.y}, {x, y}, {end.x, y}, end}));
+      routes.push_back(make_wire_from_points(
+          {start, {start.x, y}, {x, y}, {x, end.y}, end}));
+    }
+  }
+
+  return routes;
+}
 
 int main(int argc, char *argv[]) {
   const auto init_start = std::chrono::steady_clock::now();
@@ -185,6 +294,8 @@ int main(int argc, char *argv[]) {
       wire.pts[1] = {end_x, start_y}; // x axis first
       wire.pts[2] = {end_x, end_y};
     }
+
+    add_wire_to_occupancy(wire, occupancy, 1);
   }
 
   /* Initialize any additional data structures needed in the algorithm */
@@ -206,11 +317,75 @@ int main(int argc, char *argv[]) {
   */
   
   // initialize wires
+
   // Within wires
   if (parallel_mode == 'W') {
-    // within wires
+    
+    for (int iter = 0; iter < SA_iters; iter++) {
+      for (int w = 0; w < num_wires; w++) {
+        Wire curr = wires[w];
+
+        // remove wire from current occupancy matrix
+        add_wire_to_occupancy(curr, occupancy, -1);
+
+        Point start = curr.pts[0];
+        Point end = curr.pts[curr.num_pts - 1];
+
+        std::vector<Wire> routes = generate_routes(start, end);
+
+        // baseline: compare against current wire route
+        Wire best = curr;
+        long long best_cost = calculate_wire_cost_minimal(curr, occupancy);
+
+        // find lowest cost route in this iteration
+        for (Wire &candidate : routes) {
+          long long candidate_cost = 
+            calculate_wire_cost_minimal(candidate, occupancy);
+
+          if (candidate_cost < best_cost) { // preserve old route if tied
+            best = candidate; 
+            best_cost = candidate_cost;
+          }
+        }
+        wires[w] = best;
+        add_wire_to_occupancy(best, occupancy, 1);
+
+      }
+    }
   } else {
-    // across wires
+   
+    // for now
+    for (int iter = 0; iter < SA_iters; iter++) {
+      for (int w = 0; w < num_wires; w++) {
+        Wire curr = wires[w];
+
+        // remove wire from current occupancy matrix
+        add_wire_to_occupancy(curr, occupancy, -1);
+
+        Point start = curr.pts[0];
+        Point end = curr.pts[curr.num_pts - 1];
+
+        std::vector<Wire> routes = generate_routes(start, end);
+
+        // baseline: compare against current wire route
+        Wire best = curr;
+        long long best_cost = calculate_wire_cost_minimal(curr, occupancy);
+
+        // find lowest cost route in this iteration
+        for (Wire &candidate : routes) {
+          long long candidate_cost = 
+            calculate_wire_cost_minimal(candidate, occupancy);
+
+          if (candidate_cost < best_cost) { // preserve old route if tied
+            best = candidate; 
+            best_cost = candidate_cost;
+          }
+        }
+        wires[w] = best;
+        add_wire_to_occupancy(best, occupancy, 1);
+
+      }
+    }
   }
 
   // Student code end
