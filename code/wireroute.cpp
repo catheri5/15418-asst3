@@ -20,6 +20,7 @@
 #include <omp.h>
 #include <unistd.h>
 
+
 void print_stats(const std::vector<std::vector<int>> &occupancy) {
   int max_occupancy = 0;
   long long total_cost = 0;
@@ -299,6 +300,10 @@ int main(int argc, char *argv[]) {
   }
 
   /* Initialize any additional data structures needed in the algorithm */
+  // W-WIRE OPTIMIZATION KNOBS
+  // multiplier to num_threads before work is split in parallel
+  const int W_WIRE_PARALLEL_THRESHOLD_MULTIPLIER = 8; 
+  const int W_WIRE_CHUNK_SIZE = 8;
 
   // Student code end
   const double init_time =
@@ -315,8 +320,11 @@ int main(int argc, char *argv[]) {
     Don't use global variables.
     Use OpenMP to parallelize the algorithm.
   */
+  omp_set_num_threads(num_threads);
   
   // initialize wires
+  std::mt19937 rng(0);
+  std::uniform_real_distribution<double> route_choice_dist(0.0, 1.0);
 
   // Within wires
   if (parallel_mode == 'W') {
@@ -335,16 +343,65 @@ int main(int argc, char *argv[]) {
 
         // baseline: compare against current wire route
         Wire best = curr;
-        long long best_cost = calculate_wire_cost_minimal(curr, occupancy);
 
-        // find lowest cost route in this iteration
-        for (Wire &candidate : routes) {
-          long long candidate_cost = 
-            calculate_wire_cost_minimal(candidate, occupancy);
+        // Random route choosing with probability P
+        if (route_choice_dist(rng) < SA_prob) {
+          std::uniform_int_distribution<int> random_route_dist(
+              0, routes.size() - 1);
+          best = routes[random_route_dist(rng)];
 
-          if (candidate_cost < best_cost) { // preserve old route if tied
-            best = candidate; 
-            best_cost = candidate_cost;
+        } else {
+          long long best_cost = calculate_wire_cost_minimal(curr, occupancy);
+
+          // check if above parallel threshold
+          int threshold = W_WIRE_PARALLEL_THRESHOLD_MULTIPLIER * num_threads;
+          if ((int)routes.size() >= threshold) { // execute in parallel
+
+            // each thread accumulates local best first
+            int nthreads = omp_get_max_threads();
+            std::vector<long long> thread_best_cost(nthreads, best_cost);
+            std::vector<Wire> thread_best_route(nthreads, best);
+
+            #pragma omp parallel 
+            {
+              int tid = omp_get_thread_num();
+              long long local_best_cost = best_cost;
+              Wire local_best_route = best;
+
+              #pragma omp for schedule(dynamic, W_WIRE_CHUNK_SIZE) 
+              for (int r = 0; r < (int)routes.size(); r++) {
+                long long candidate_cost = 
+                 calculate_wire_cost_minimal(routes[r], occupancy); 
+
+                if (candidate_cost < local_best_cost) {
+                  local_best_cost = candidate_cost;
+                  local_best_route = routes[r];
+                }
+              }
+
+              thread_best_cost[tid] = local_best_cost;
+              thread_best_route[tid] = local_best_route;
+            }
+
+            // update overall best route variables from local bests
+            for (int t = 0; t < nthreads; t++) {
+              if (thread_best_cost[t] < best_cost) {
+                best_cost = thread_best_cost[t];
+                best = thread_best_route[t];
+              }
+            }
+            
+          } else { // execute sequentially
+            // find lowest cost route in this iteration
+            for (Wire &candidate : routes) {
+              long long candidate_cost = 
+                calculate_wire_cost_minimal(candidate, occupancy);
+
+              if (candidate_cost < best_cost) { // preserve old route if tied
+                best = candidate; 
+                best_cost = candidate_cost;
+              }
+            }
           }
         }
         wires[w] = best;
