@@ -49,11 +49,10 @@ for (int r = 0; r < routes.size(); r++) {
 
 Things to experiment with:
 
-- Threshold for switching from sequential to parallel route scoring.
+- Threshold for switching from sequential to parallel route scoring - 2, 4, 8, 16, 32
 - `schedule(static)`.
 - `schedule(dynamic, 1)`.
 - `schedule(dynamic, 8)`, `16`, or `32`.
-- `schedule(guided)`.
 
 Design goal:
 
@@ -212,3 +211,48 @@ Do not start with these:
 These may become useful later, but the next useful step is a measured
 within-wires implementation against the correct sequential baseline.
 
+
+## Resume Point: Next Optimization Pass
+
+Current within-wires state:
+
+- Baseline correctness is implemented with keypoint wires and occupancy updates.
+- Initial route construction is now inside the compute section for final timing
+  compatibility.
+- Within-wires route scoring uses per-thread local bests and a final reduction.
+- Current chosen knobs: static schedule, threshold multiplier 4, chunk size 8.
+
+Next recommended sequence when resuming:
+
+1. Add `routes.reserve(...)` in `generate_routes`.
+   - Low-risk and easy to test.
+   - Does not violate the no-reuse/no-prefix-sum rule.
+
+2. Collect a fresh `few_wires.txt` and `medium_wires.txt` `n=1` timing after
+   `reserve`.
+   - Compare against current absolute runtime and handout reference.
+
+3. If absolute runtime is still high, consider replacing `generate_routes` +
+   stored vector with on-the-fly candidate generation/scoring.
+   - Sequential version: generate route, score route, update best immediately.
+   - Parallel version: map route index to route, score fully, local-best reduce.
+
+4. Add deterministic tie-breaking by route index before large final sweeps.
+   - This should make cost/output comparisons more stable across schedules and
+     thread counts.
+
+5. Add route-search instrumentation if tuning remains confusing.
+   - Counts to print temporarily:
+     - total route searches
+     - parallel route searches
+     - sequential route searches
+     - average routes per search
+     - max routes per search
+
+6. Once within-wires is stable, collect required final GHC W-mode data:
+   - `few_wires.txt`, `medium_wires.txt`, `abundant_wires.txt`
+   - `-n 1,2,4,8`
+   - `-p 0.1 -i 5 -m W -b 1`
+   - timing, cost, max occupancy, validation, cache misses
+
+7. Then move on to across-wires.

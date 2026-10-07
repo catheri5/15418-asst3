@@ -21,18 +21,19 @@ to the start point, up to three bends, and the end point.  This matches the
 assignment checker format and makes route construction and validation easier to
 reason about.
 
-During initialization, each input wire is assigned a simple legal route.  If the
+At the start of timed computation, each input wire is assigned a simple legal route.  If the
 endpoints share a row or column, the initial route is straight.  Otherwise, the
 initial route is a horizontal-first one-bend path.  The occupancy matrix is then
 constructed by adding each initial wire route.
 
 The current baseline rerouting algorithm visits every wire for each iteration.
 For a wire being reconsidered, the current route is first removed from the
-occupancy matrix.  The program then generates every legal route with at most
-three bends, scores each route using the sum of squared occupancy values that
-would result from adding the wire back, and chooses the lowest-cost route.  Ties
-are broken by preserving the existing route.  The selected route is then added
-back into the occupancy matrix.
+occupancy matrix.  With fixed probability $P$, the program chooses a legal route
+uniformly at random.  Otherwise, it evaluates every legal route with at most
+three bends using the sum of squared occupancy values that would result from
+adding the wire back, and chooses the lowest-cost route.  The existing route is
+preserved unless a strictly cheaper candidate is found.  The selected route is
+then added back into the occupancy matrix.
 
 \section{Route Generation and Cost Calculation}
 
@@ -48,6 +49,32 @@ When scoring a candidate route, the current wire has already been factored out
 of the occupancy matrix.  Therefore each occupied cell on the candidate route is
 scored using $(occupancy[y][x] + 1)^2$.  This computes the route's relevant
 contribution if the current wire were added back along that path.
+
+\section{Sequential Baseline Optimization}
+
+Before further within-wires tuning, we focused on the efficiency of the
+one-thread baseline.  Originally, we stored all candidate routes in a vector
+before scoring them.  We changed the sequential search to construct and fully
+score each candidate immediately, keeping only the current candidate and best
+route.  This removes candidate-vector allocation, growth, and storage overhead
+without changing the exhaustive route set.  The random branch constructs just
+the uniformly selected route without building the candidate list.
+
+We also specialized the cost loop for horizontal and vertical segments.  The
+original function already traversed one segment at a time, but used a general
+loop that checked and updated both coordinates for every cell.  The new loop
+fixes the row for horizontal segments and walks contiguous cells, while the
+vertical loop fixes the column and changes only the row index.  Vertical access
+still crosses separate rows and is not contiguous; its benefit is simpler loop
+control, while horizontal traversal also exposes contiguous access more clearly
+to the compiler.  Both directions count bends and the final endpoint exactly
+once, and every candidate is still evaluated completely without cost reuse or
+early termination.
+
+These changes currently apply only to the sequential \texttt{-m A} baseline.
+The existing within-wires implementation retains its candidate vector and
+original cost loop while we evaluate the baseline changes.  Final GHC timings
+for the combined optimizations remain to be collected.
 
 \section{Within-Wires Parallelism}
 
