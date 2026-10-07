@@ -214,10 +214,39 @@ std::vector<Wire> generate_routes(Point start, Point end) {
   return routes;
 }
 
+// Keep row and column occupancy views in sync for the baseline
+static void add_wire_to_occupancy_baseline(
+    const Wire &wire,
+    std::vector<std::vector<int>> &occupancy,
+    std::vector<std::vector<int>> &occupancy_columns,
+    int delta) {
+  for (int i = 1; i < wire.num_pts; i++) {
+    int x = wire.pts[i - 1].x;
+    int y = wire.pts[i - 1].y;
+    const int end_x = wire.pts[i].x;
+    const int end_y = wire.pts[i].y;
+    const int dx = (end_x > x) ? 1 : (end_x < x) ? -1 : 0;
+    const int dy = (end_y > y) ? 1 : (end_y < y) ? -1 : 0;
+
+    while (x != end_x || y != end_y) {
+      occupancy[y][x] += delta;
+      occupancy_columns[x][y] += delta;
+      x += dx;
+      y += dy;
+    }
+
+    if (i == wire.num_pts - 1) {
+      occupancy[y][x] += delta;
+      occupancy_columns[x][y] += delta;
+    }
+  }
+}
+
 // Score baseline segments along one axis at a time (better locality)
 static long long calculate_wire_cost_baseline(
     const Wire &wire,
-    const std::vector<std::vector<int>> &occupancy) {
+    const std::vector<std::vector<int>> &occupancy,
+    const std::vector<std::vector<int>> &occupancy_columns) {
   long long cost = 0;
 
   for (int i = 1; i < wire.num_pts; i++) {
@@ -236,12 +265,13 @@ static long long calculate_wire_cost_baseline(
         cost += occ * occ;
       }
     } else {
-      // Keep the column fixed for vertical access
+      // Read consecutive cells from the column view
+      const auto &column = occupancy_columns[start.x];
       const int offset = start.y > end.y ? 1 : 0;
       const int first = std::min(start.y, end.y) + offset;
       const int limit = std::max(start.y, end.y) + offset;
       for (int y = first; y < limit; y++) {
-        const long long occ = occupancy[y][start.x] + 1;
+        const long long occ = column[y] + 1;
         cost += occ * occ;
       }
     }
@@ -261,8 +291,10 @@ static long long calculate_wire_cost_baseline(
 static void try_candidate_route(
     const Wire &candidate,
     const std::vector<std::vector<int>> &occupancy,
+    const std::vector<std::vector<int>> &occupancy_columns,
     Wire &best, long long &best_cost) {
-  const long long cost = calculate_wire_cost_baseline(candidate, occupancy);
+  const long long cost = calculate_wire_cost_baseline(
+      candidate, occupancy, occupancy_columns);
   // Keep the existing best on ties
   if (cost < best_cost) {
     best_cost = cost;
@@ -285,11 +317,12 @@ static long long count_routes(Point start, Point end) {
 static void try_routes_sequential(
     Point start, Point end,
     const std::vector<std::vector<int>> &occupancy,
+    const std::vector<std::vector<int>> &occupancy_columns,
     Wire &best, long long &best_cost) {
 
   if (start.x == end.x || start.y == end.y) {
     try_candidate_route(make_wire_from_points({start, end}),
-                        occupancy, best, best_cost);
+                        occupancy, occupancy_columns, best, best_cost);
     return;
   }
 
@@ -305,7 +338,7 @@ static void try_routes_sequential(
     }
     try_candidate_route(
         make_wire_from_points({start, {x, start.y}, {x, end.y}, end}),
-        occupancy, best, best_cost);
+        occupancy, occupancy_columns, best, best_cost);
   }
 
   // Vertical-first routes with at most two bends
@@ -315,7 +348,7 @@ static void try_routes_sequential(
     }
     try_candidate_route(
         make_wire_from_points({start, {start.x, y}, {end.x, y}, end}),
-        occupancy, best, best_cost);
+        occupancy, occupancy_columns, best, best_cost);
   }
 
   // Exactly three-bend routes through each interior point
@@ -324,11 +357,11 @@ static void try_routes_sequential(
       // Horizontal first
       try_candidate_route(make_wire_from_points(
           {start, {x, start.y}, {x, y}, {end.x, y}, end}),
-          occupancy, best, best_cost);
+          occupancy, occupancy_columns, best, best_cost);
       // Vertical first
       try_candidate_route(make_wire_from_points(
           {start, {start.x, y}, {x, y}, {x, end.y}, end}),
-          occupancy, best, best_cost);
+          occupancy, occupancy_columns, best, best_cost);
     }
   }
 }
@@ -459,6 +492,12 @@ int main(int argc, char *argv[]) {
   }
 
   /* Initialize any additional data structures needed in the algorithm */
+  // Extra column view only for the sequential baseline
+  std::vector<std::vector<int>> occupancy_columns;
+  if (parallel_mode == 'A') {
+    occupancy_columns.assign(dim_x, std::vector<int>(dim_y));
+  }
+
   // WITHIN WIRE OPTIMIZATION KNOBS
   // multiplier to num_threads before work is split in parallel
   const int W_WIRE_PARALLEL_THRESHOLD_MULTIPLIER = 4; 
@@ -495,7 +534,11 @@ int main(int argc, char *argv[]) {
       wire.pts[2] = end;
     }
 
-    add_wire_to_occupancy(wire, occupancy, 1);
+    if (parallel_mode == 'A') {
+      add_wire_to_occupancy_baseline(wire, occupancy, occupancy_columns, 1);
+    } else {
+      add_wire_to_occupancy(wire, occupancy, 1);
+    }
   }
 
   std::mt19937 rng(0);
@@ -592,7 +635,7 @@ int main(int argc, char *argv[]) {
         Wire curr = wires[w];
 
         // remove wire from current occupancy matrix
-        add_wire_to_occupancy(curr, occupancy, -1);
+        add_wire_to_occupancy_baseline(curr, occupancy, occupancy_columns, -1);
 
         Point start = curr.pts[0];
         Point end = curr.pts[curr.num_pts - 1];
@@ -603,12 +646,14 @@ int main(int argc, char *argv[]) {
         if (route_choice_dist(rng) < SA_prob) {
           best = choose_random_route(start, end, rng);
         } else {
-          long long best_cost = calculate_wire_cost_baseline(curr, occupancy);
-          try_routes_sequential(start, end, occupancy, best, best_cost);
+          long long best_cost = calculate_wire_cost_baseline(
+              curr, occupancy, occupancy_columns);
+          try_routes_sequential(start, end, occupancy, occupancy_columns,
+                                best, best_cost);
         }
         // Commit the chosen route to occupancy
         wires[w] = best;
-        add_wire_to_occupancy(best, occupancy, 1);
+        add_wire_to_occupancy_baseline(best, occupancy, occupancy_columns, 1);
 
       }
     }
