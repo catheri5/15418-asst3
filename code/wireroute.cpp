@@ -88,11 +88,13 @@ void write_output(
 
 /*** HELPER FUNCTIONS ****/
 
+// Build a route from keypoints
 static Wire make_wire_from_points(std::initializer_list<Point> points) {
   Wire wire;
   wire.num_pts = 0;
 
   for (const Point &point : points) {
+    // Skip adjacent duplicates when a bend meets an endpoint
     if (wire.num_pts > 0 && 
         wire.pts[wire.num_pts - 1].x == point.x &&
         wire.pts[wire.num_pts - 1].y == point.y) {
@@ -105,6 +107,7 @@ static Wire make_wire_from_points(std::initializer_list<Point> points) {
   return wire;
 }
 
+// Add or remove a wire using delta +1 or -1
 void add_wire_to_occupancy(const Wire &wire,
                            std::vector<std::vector<int>> &occupancy,
                            int delta) {
@@ -117,6 +120,7 @@ void add_wire_to_occupancy(const Wire &wire,
     const int dx = (end_x > x) ? 1 : (end_x < x) ? -1 : 0;
     const int dy = (end_y > y) ? 1 : (end_y < y) ? -1 : 0;
 
+    // Leave each bend for the next segment
     while (x != end_x || y != end_y) {
       occupancy[y][x] += delta;
       x += dx;
@@ -124,11 +128,13 @@ void add_wire_to_occupancy(const Wire &wire,
     }
 
     if (i == wire.num_pts - 1) {
+      // Include the final endpoint once
       occupancy[y][x] += delta;
     }
   }
 }
 
+// Fully score a candidate after removing the current wire
 long long calculate_wire_cost_minimal(
     const Wire &wire,
     const std::vector<std::vector<int>> &occupancy) {
@@ -161,6 +167,7 @@ long long calculate_wire_cost_minimal(
   return cost;
 }
 
+// Store all candidates for within wires
 std::vector<Wire> generate_routes(Point start, Point end) {
   std::vector<Wire> routes;
 
@@ -195,14 +202,131 @@ std::vector<Wire> generate_routes(Point start, Point end) {
   // Exactly three-bend routes through each interior point
   for (int x = min_x + 1; x < max_x; x++) {
     for (int y = min_y + 1; y < max_y; y++) {
+      // horizontal first
       routes.push_back(make_wire_from_points(
           {start, {x, start.y}, {x, y}, {end.x, y}, end}));
+      // vertical first
       routes.push_back(make_wire_from_points(
           {start, {start.x, y}, {x, y}, {x, end.y}, end}));
     }
   }
 
   return routes;
+}
+
+// Score one candidate and update best route and cost together
+static void try_candidate_route(
+    const Wire &candidate,
+    const std::vector<std::vector<int>> &occupancy,
+    Wire &best, long long &best_cost) {
+  const long long cost = calculate_wire_cost_minimal(candidate, occupancy);
+  // Keep the existing best on ties
+  if (cost < best_cost) {
+    best_cost = cost;
+    best = candidate;
+  }
+}
+
+// Count legal routes for uniform random selection
+static long long count_routes(Point start, Point end) {
+  const long long dx = std::abs(end.x - start.x);
+  const long long dy = std::abs(end.y - start.y);
+  if (dx == 0 || dy == 0) {
+    return 1;
+  }
+  // At most two bends plus both three bend orientations
+  return dx + dy + 2 * (dx - 1) * (dy - 1);
+}
+
+// Generate and score candidates without storing them
+static void try_routes_sequential(
+    Point start, Point end,
+    const std::vector<std::vector<int>> &occupancy,
+    Wire &best, long long &best_cost) {
+
+  if (start.x == end.x || start.y == end.y) {
+    try_candidate_route(make_wire_from_points({start, end}),
+                        occupancy, best, best_cost);
+    return;
+  }
+
+  int min_x = std::min(start.x, end.x);
+  int max_x = std::max(start.x, end.x);
+  int min_y = std::min(start.y, end.y);
+  int max_y = std::max(start.y, end.y);
+
+  // Horizontal-first routes with at most two bends
+  for (int x = min_x; x <= max_x; x++) {
+    if (x == start.x) {
+      continue;
+    }
+    try_candidate_route(
+        make_wire_from_points({start, {x, start.y}, {x, end.y}, end}),
+        occupancy, best, best_cost);
+  }
+
+  // Vertical-first routes with at most two bends
+  for (int y = min_y; y <= max_y; y++) {
+    if (y == start.y) {
+      continue;
+    }
+    try_candidate_route(
+        make_wire_from_points({start, {start.x, y}, {end.x, y}, end}),
+        occupancy, best, best_cost);
+  }
+
+  // Exactly three-bend routes through each interior point
+  for (int x = min_x + 1; x < max_x; x++) {
+    for (int y = min_y + 1; y < max_y; y++) {
+      // Horizontal first
+      try_candidate_route(make_wire_from_points(
+          {start, {x, start.y}, {x, y}, {end.x, y}, end}),
+          occupancy, best, best_cost);
+      // Vertical first
+      try_candidate_route(make_wire_from_points(
+          {start, {start.x, y}, {x, y}, {x, end.y}, end}),
+          occupancy, best, best_cost);
+    }
+  }
+}
+
+// Construct one uniformly chosen route
+static Wire choose_random_route(Point start, Point end, std::mt19937 &rng) {
+  std::uniform_int_distribution<long long> random_route_dist(
+      0, count_routes(start, end) - 1);
+  long long choice = random_route_dist(rng);
+
+  if (start.x == end.x || start.y == end.y) {
+    return make_wire_from_points({start, end});
+  }
+
+  const int min_x = std::min(start.x, end.x);
+  const int min_y = std::min(start.y, end.y);
+  const long long dx = std::abs(end.x - start.x);
+  const long long dy = std::abs(end.y - start.y);
+
+  // First dx choices are horizontal first
+  if (choice < dx) {
+    const int x = min_x + (start.x == min_x ? 1 : 0) + choice;
+    return make_wire_from_points({start, {x, start.y}, {x, end.y}, end});
+  }
+  choice -= dx;
+  // Next dy choices are vertical first
+  if (choice < dy) {
+    const int y = min_y + (start.y == min_y ? 1 : 0) + choice;
+    return make_wire_from_points({start, {start.x, y}, {end.x, y}, end});
+  }
+  choice -= dy;
+
+  // Two choices per interior point for the two orientations
+  const int x = min_x + 1 + (choice / 2) / (dy - 1);
+  const int y = min_y + 1 + (choice / 2) % (dy - 1);
+  if (choice % 2 == 0) {
+    return make_wire_from_points(
+        {start, {x, start.y}, {x, y}, {end.x, y}, end});
+  }
+  return make_wire_from_points(
+      {start, {start.x, y}, {x, y}, {x, end.y}, end});
 }
 
 int main(int argc, char *argv[]) {
@@ -292,7 +416,7 @@ int main(int argc, char *argv[]) {
   }
 
   /* Initialize any additional data structures needed in the algorithm */
-  // W-WIRE OPTIMIZATION KNOBS
+  // WITHIN WIRE OPTIMIZATION KNOBS
   // multiplier to num_threads before work is split in parallel
   const int W_WIRE_PARALLEL_THRESHOLD_MULTIPLIER = 4; 
   const int W_WIRE_CHUNK_SIZE = 8;
@@ -419,7 +543,7 @@ int main(int argc, char *argv[]) {
     }
   } else {
    
-    // for now
+    // baseline sequential for now
     for (int iter = 0; iter < SA_iters; iter++) {
       for (int w = 0; w < num_wires; w++) {
         Wire curr = wires[w];
@@ -430,22 +554,16 @@ int main(int argc, char *argv[]) {
         Point start = curr.pts[0];
         Point end = curr.pts[curr.num_pts - 1];
 
-        std::vector<Wire> routes = generate_routes(start, end);
-
-        // baseline: compare against current wire route
+        // Generate and score one candidate at a time
         Wire best = curr;
-        long long best_cost = calculate_wire_cost_minimal(curr, occupancy);
-
-        // find lowest cost route in this iteration
-        for (Wire &candidate : routes) {
-          long long candidate_cost = 
-            calculate_wire_cost_minimal(candidate, occupancy);
-
-          if (candidate_cost < best_cost) { // preserve old route if tied
-            best = candidate; 
-            best_cost = candidate_cost;
-          }
+        // Random route with probability P
+        if (route_choice_dist(rng) < SA_prob) {
+          best = choose_random_route(start, end, rng);
+        } else {
+          long long best_cost = calculate_wire_cost_minimal(curr, occupancy);
+          try_routes_sequential(start, end, occupancy, best, best_cost);
         }
+        // Commit the chosen route to occupancy
         wires[w] = best;
         add_wire_to_occupancy(best, occupancy, 1);
 
