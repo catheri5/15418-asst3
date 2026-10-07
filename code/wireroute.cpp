@@ -167,7 +167,7 @@ long long calculate_wire_cost_minimal(
   return cost;
 }
 
-// Store all candidates for within wires
+// Original vector-based route generator
 std::vector<Wire> generate_routes(Point start, Point end) {
   std::vector<Wire> routes;
 
@@ -366,12 +366,8 @@ static void try_routes_sequential(
   }
 }
 
-// Construct one uniformly chosen route
-static Wire choose_random_route(Point start, Point end, std::mt19937 &rng) {
-  std::uniform_int_distribution<long long> random_route_dist(
-      0, count_routes(start, end) - 1);
-  long long choice = random_route_dist(rng);
-
+// Construct one route in the original candidate order
+static Wire route_from_index(Point start, Point end, long long choice) {
   if (start.x == end.x || start.y == end.y) {
     return make_wire_from_points({start, end});
   }
@@ -403,6 +399,13 @@ static Wire choose_random_route(Point start, Point end, std::mt19937 &rng) {
   }
   return make_wire_from_points(
       {start, {start.x, y}, {x, y}, {x, end.y}, end});
+}
+
+// Construct one uniformly chosen route
+static Wire choose_random_route(Point start, Point end, std::mt19937 &rng) {
+  std::uniform_int_distribution<long long> random_route_dist(
+      0, count_routes(start, end) - 1);
+  return route_from_index(start, end, random_route_dist(rng));
 }
 
 int main(int argc, char *argv[]) {
@@ -492,11 +495,8 @@ int main(int argc, char *argv[]) {
   }
 
   /* Initialize any additional data structures needed in the algorithm */
-  // Extra column view only for the sequential baseline
-  std::vector<std::vector<int>> occupancy_columns;
-  if (parallel_mode == 'A') {
-    occupancy_columns.assign(dim_x, std::vector<int>(dim_y));
-  }
+  // Column view for contiguous vertical scoring in both modes
+  std::vector<std::vector<int>> occupancy_columns(dim_x, std::vector<int>(dim_y));
 
   // WITHIN WIRE OPTIMIZATION KNOBS
   // multiplier to num_threads before work is split in parallel
@@ -534,11 +534,7 @@ int main(int argc, char *argv[]) {
       wire.pts[2] = end;
     }
 
-    if (parallel_mode == 'A') {
-      add_wire_to_occupancy_baseline(wire, occupancy, occupancy_columns, 1);
-    } else {
-      add_wire_to_occupancy(wire, occupancy, 1);
-    }
+    add_wire_to_occupancy_baseline(wire, occupancy, occupancy_columns, 1);
   }
 
   std::mt19937 rng(0);
@@ -552,28 +548,29 @@ int main(int argc, char *argv[]) {
         Wire curr = wires[w];
 
         // remove wire from current occupancy matrix
-        add_wire_to_occupancy(curr, occupancy, -1);
+        add_wire_to_occupancy_baseline(curr, occupancy, occupancy_columns, -1);
 
         Point start = curr.pts[0];
         Point end = curr.pts[curr.num_pts - 1];
 
-        std::vector<Wire> routes = generate_routes(start, end);
+        // Count candidates without constructing or storing them
+        const long long num_routes = count_routes(start, end);
 
         // baseline: compare against current wire route
         Wire best = curr;
 
         // Random route choosing with probability P
         if (route_choice_dist(rng) < SA_prob) {
-          std::uniform_int_distribution<int> random_route_dist(
-              0, routes.size() - 1);
-          best = routes[random_route_dist(rng)];
+          best = choose_random_route(start, end, rng);
 
         } else {
-          long long best_cost = calculate_wire_cost_minimal(curr, occupancy);
+          long long best_cost = calculate_wire_cost_baseline(
+              curr, occupancy, occupancy_columns);
 
           // check if above parallel threshold
-          int threshold = W_WIRE_PARALLEL_THRESHOLD_MULTIPLIER * num_threads;
-          if ((int)routes.size() >= threshold) { // execute in parallel
+          const long long threshold =
+              1LL * W_WIRE_PARALLEL_THRESHOLD_MULTIPLIER * num_threads;
+          if (num_routes >= threshold) { // execute in parallel
 
             // each thread accumulates local best first
             int nthreads = omp_get_max_threads();
@@ -587,14 +584,11 @@ int main(int argc, char *argv[]) {
               Wire local_best_route = best;
 
               #pragma omp for schedule(static, W_WIRE_CHUNK_SIZE) 
-              for (int r = 0; r < (int)routes.size(); r++) {
-                long long candidate_cost = 
-                 calculate_wire_cost_minimal(routes[r], occupancy); 
-
-                if (candidate_cost < local_best_cost) {
-                  local_best_cost = candidate_cost;
-                  local_best_route = routes[r];
-                }
+              for (long long r = 0; r < num_routes; r++) {
+                // Construct and fully score this thread's next candidate
+                const Wire candidate = route_from_index(start, end, r);
+                try_candidate_route(candidate, occupancy, occupancy_columns,
+                                    local_best_route, local_best_cost);
               }
 
               thread_best_cost[tid] = local_best_cost;
@@ -611,19 +605,15 @@ int main(int argc, char *argv[]) {
             
           } else { // execute sequentially
             // find lowest cost route in this iteration
-            for (Wire &candidate : routes) {
-              long long candidate_cost = 
-                calculate_wire_cost_minimal(candidate, occupancy);
-
-              if (candidate_cost < best_cost) { // preserve old route if tied
-                best = candidate; 
-                best_cost = candidate_cost;
-              }
+            for (long long r = 0; r < num_routes; r++) {
+              const Wire candidate = route_from_index(start, end, r);
+              try_candidate_route(candidate, occupancy, occupancy_columns,
+                                  best, best_cost);
             }
           }
         }
         wires[w] = best;
-        add_wire_to_occupancy(best, occupancy, 1);
+        add_wire_to_occupancy_baseline(best, occupancy, occupancy_columns, 1);
 
       }
     }
