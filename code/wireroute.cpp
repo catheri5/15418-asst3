@@ -214,12 +214,55 @@ std::vector<Wire> generate_routes(Point start, Point end) {
   return routes;
 }
 
+// Score baseline segments along one axis at a time (better locality)
+static long long calculate_wire_cost_baseline(
+    const Wire &wire,
+    const std::vector<std::vector<int>> &occupancy) {
+  long long cost = 0;
+
+  for (int i = 1; i < wire.num_pts; i++) {
+    const Point start = wire.pts[i - 1];
+    const Point end = wire.pts[i];
+
+    if (start.y == end.y) {
+      // Keep the row fixed for horizontal access
+      const auto &row = occupancy[start.y];
+      // Shift reversed segment bounds to exclude its end
+      const int offset = start.x > end.x ? 1 : 0;
+      const int first = std::min(start.x, end.x) + offset;
+      const int limit = std::max(start.x, end.x) + offset;
+      for (int x = first; x < limit; x++) {
+        const long long occ = row[x] + 1;
+        cost += occ * occ;
+      }
+    } else {
+      // Keep the column fixed for vertical access
+      const int offset = start.y > end.y ? 1 : 0;
+      const int first = std::min(start.y, end.y) + offset;
+      const int limit = std::max(start.y, end.y) + offset;
+      for (int y = first; y < limit; y++) {
+        const long long occ = occupancy[y][start.x] + 1;
+        cost += occ * occ;
+      }
+    }
+  }
+
+  // Include the final endpoint once
+  if (wire.num_pts > 1) {
+    const Point end = wire.pts[wire.num_pts - 1];
+    const long long occ = occupancy[end.y][end.x] + 1;
+    cost += occ * occ;
+  }
+
+  return cost;
+}
+
 // Score one candidate and update best route and cost together
 static void try_candidate_route(
     const Wire &candidate,
     const std::vector<std::vector<int>> &occupancy,
     Wire &best, long long &best_cost) {
-  const long long cost = calculate_wire_cost_minimal(candidate, occupancy);
+  const long long cost = calculate_wire_cost_baseline(candidate, occupancy);
   // Keep the existing best on ties
   if (cost < best_cost) {
     best_cost = cost;
@@ -560,7 +603,7 @@ int main(int argc, char *argv[]) {
         if (route_choice_dist(rng) < SA_prob) {
           best = choose_random_route(start, end, rng);
         } else {
-          long long best_cost = calculate_wire_cost_minimal(curr, occupancy);
+          long long best_cost = calculate_wire_cost_baseline(curr, occupancy);
           try_routes_sequential(start, end, occupancy, best, best_cost);
         }
         // Commit the chosen route to occupancy
