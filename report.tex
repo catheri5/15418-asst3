@@ -2,6 +2,7 @@
 \usepackage{hyperref}
 \usepackage{graphicx}
 \usepackage{placeins}
+\usepackage{booktabs}
 
 \title{15-418 Assignment 3: Parallel VLSI Wire Routing\
 \large Report}
@@ -52,175 +53,250 @@ contribution if the current wire were added back along that path.
 
 \section{Sequential Baseline Optimization}
 
+Table~\ref{tab:baseline-progress} summarizes the historical computation
+checkpoints on GHC for \texttt{few\_wires.txt}, one thread, $P=0.1$,
+five iterations, and batch size one. The early W-mode measurement provides
+context; the subsequent optimizations were first tested in the sequential
+A-mode baseline before being ported to W.
+
+\begin{table}[!htbp]
+\centering
+\small
+\begin{tabular}{@{}p{0.54\linewidth} c r@{}}
+\toprule
+Implementation checkpoint & Mode & Compute (s) \\
+\midrule
+Early vector-based candidate search & W & 6.14 \\
+Generate and score immediately, without a candidate vector & A & $\approx 5.89$ \\
+Also specialize horizontal/vertical cost loops & A & 3.17 \\
+Also maintain a contiguous column occupancy view & A & $\approx 2.68$ \\
+\bottomrule
+\end{tabular}
+\caption{Exploratory baseline progression, with times shown to three significant
+figures. The 5.89 s and 2.68 s values were reported approximately. The 3.17 s
+value is a representative run, with a reported median of approximately 3.15 s.}
+\label{tab:baseline-progress}
+\end{table}
+
+The recorded stages matter: eliminating the route vector alone left the
+A-mode baseline near 5.89 seconds, rather than immediately reaching 3.17.
+That larger reduction followed the axis-specific scoring loop; contiguous
+vertical access then reduced the reported time to about 2.68 seconds.
+From the 5.89-second A-mode checkpoint to 2.68 seconds, computation time
+fell by approximately 54.5\% (about $2.20\times$ speedup).
+These historical checkpoints were not all collected as a controlled
+median-of-three comparison, and W and A use different search paths, so we
+treat them as evidence of progress rather than a final benchmark comparison.
+
 Before further within-wires tuning, we focused on the efficiency of the
-one-thread baseline.  Originally, we stored all candidate routes in a vector
-before scoring them.  We changed the sequential search to construct and fully
+one-thread baseline. Originally, we stored all candidate routes in a vector
+before scoring them. We changed the sequential search to construct and fully
 score each candidate immediately, keeping only the current candidate and best
-route.  This removes candidate-vector allocation, growth, and storage overhead
-without changing the exhaustive route set.  The random branch constructs just
+route. This removes candidate-vector allocation, growth, and storage overhead
+without changing the exhaustive route set. The random branch constructs just
 the uniformly selected route without building the candidate list.
 
-We also specialized the cost loop for horizontal and vertical segments.  The
-original function already traversed one segment at a time, but used a general
-loop that checked and updated both coordinates for every cell.  The new loop
-fixes the row for horizontal segments and walks contiguous cells, while the
-vertical loop fixes the column and changes only the row index.  Vertical access
-still crosses separate rows and is not contiguous; its benefit is simpler loop
-control, while horizontal traversal also exposes contiguous access more clearly
-to the compiler.  Both directions count bends and the final endpoint exactly
-once, and every candidate is still evaluated completely without cost reuse or
-early termination.
+We also specialized the cost loop for horizontal and vertical segments.
+Horizontal scoring fixes a row and changes only the column index; vertical
+scoring fixes a column and changes only the row index. Initially, vertical
+access still crossed separately allocated rows. We subsequently added a
+transposed raw occupancy view, \texttt{occupancy\_columns[x][y]}, alongside
+\texttt{occupancy[y][x]}. Horizontal segments now read contiguous rows and
+vertical segments read contiguous columns. Every wire removal and insertion
+updates both views. This trades additional memory and update work for better
+locality during the many candidate-scoring reads.
 
-These changes currently apply only to the sequential \texttt{-m A} baseline.
-The existing within-wires implementation retains its candidate vector and
-original cost loop while we evaluate the baseline changes.  Final GHC timings
-for the combined optimizations remain to be collected.
+The transposed view is not a prefix-sum table or a cache of route costs.
+Every candidate is still evaluated completely, without cost reuse or early
+termination, and bends and the final endpoint are counted exactly once.
+The optimized traversal is now used by both modes. A mode generates candidates
+directly in sequential loops; W mode uses indexed generation as described below.
 
+\FloatBarrier
 \section{Within-Wires Parallelism}
 
-The first OpenMP implementation target is the within-wires strategy.  For a
-single wire, all candidate routes can be scored independently while reading the
-same occupancy matrix.  We plan to keep the outer loop over wires sequential at
-first, generate the candidate routes for the current wire, and parallelize the
-route-scoring loop when the number of routes is large enough to amortize OpenMP
-overhead.
+We keep iterations and the outer loop over wires sequential. After removing
+the current wire from both occupancy views, all candidates for that wire can
+be evaluated independently against the same read-only occupancy state. The
+chosen route is committed before moving to the next wire.
 
-Our current within-wires implementation uses per-thread local best routes during
-the parallel route-scoring loop.  Each worker scores a subset of candidate
-routes and records its best local route and cost.  After the parallel loop, the
-main thread reduces these per-thread results to choose the route for the current
-wire.  This avoids locking inside the route-scoring loop.
+Our initial parallel implementation generated a candidate vector sequentially
+and parallelized only scoring. The current implementation instead maps an
+integer route index to one candidate with \texttt{route\_from\_index()}.
+Each worker constructs and scores its assigned candidates immediately, so
+candidate generation is also parallel and the full route vector is no longer
+stored. The exact candidate count is available without constructing routes:
+for non-collinear endpoints it is
+\[
+N_{\mathrm{routes}} = d_x + d_y + 2(d_x-1)(d_y-1),
+\]
+where $d_x$ and $d_y$ are absolute endpoint differences. Collinear endpoints
+have one candidate. This preserves a route-count-based sequential fallback.
 
-We are comparing static and dynamic scheduling policies.  Since different wires
-can have very different numbers of candidate routes, we also test a threshold
-below which route scoring remains sequential.  The goal on the GHC machines is
-to expose enough route-scoring work to keep up to 8 threads busy.  For the later
-PSC experiments, the same design will need to expose enough work to scale toward
-128 threads.
+Each thread maintains a private best route and cost. At the end of the parallel
+search, the main thread combines the per-thread results. This is a manual
+minimum reduction, analogous to accumulating partial sums independently and
+combining them once, rather than synchronizing after every candidate.
 
-
-\subsection{Preliminary Within-Wires Tuning}
+\subsection{Tuning Methodology and Decisions}
 
 For early within-wires tuning, we temporarily measured only the iterative
 rerouting phase, excluding initial route placement and occupancy initialization.
 This narrower timing made it easier to isolate the effect of scheduling, chunk
-size, and threshold choices.  Final benchmark results use the assignment timing
-definition, where computation time includes initial route placement.
+size, and threshold choices. Those older implementation measurements are not
+used for the current choices below. Current measurements use the assignment
+timing definition, where computation includes initial route placement and
+occupancy filling.
 
-We omitted a small set of earlier exploratory timings that used an outdated
-timing and run configuration.  The tables below use the corrected tuning setup
-and are the runs used to guide the current within-wires design choices.
+For the current sweeps, we used \texttt{medium\_wires.txt}, eight threads,
+$P=0.1$, five iterations, and batch size one. Each computation time is the
+median of three runs per configuration, with one knob varied at a time.
+All supplied sweep outputs passed validation and had maximum occupancy three.
 
-Table~\ref{tab:ww-schedule-corrected-prelim} shows a static/dynamic comparison
-for the current within-wires implementation.  These runs use
-8 threads, $P=0$, 5 iterations, a threshold multiplier of 8, and chunk size 8.
-Computation time still excludes initial route placement and occupancy
-initialization.
+Table~\ref{tab:ww-tuning} collects the three sweeps. Bold settings are the
+selected choices; differences within each sweep were small.
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering
-\begin{tabular}{l l r r r r}
-\hline
-Input & Schedule & Init (s) & Compute (s) & Max Occ. & Cost \\
-\hline
-few wires & static & 0.0217492720 & 1.2637013040 & 2 & 29236 \\
-medium wires & static & 0.0276752920 & 4.6609008170 & 2 & 266415 \\
-few wires & dynamic & 0.0221345980 & 1.2671972500 & 2 & 29236 \\
-medium wires & dynamic & 0.0277004300 & 4.7129189950 & 2 & 266429 \\
-\hline
+\small
+\begin{tabular}{@{}l l r r@{}}
+\toprule
+Sweep & Setting & Compute median (s) & Cost \\
+\midrule
+Schedule & \textbf{static} & 1.504505 & 267645 \\
+         & dynamic & 1.535503 & 267681 \\
+\midrule
+Chunk size & \textbf{1} & 1.486193 & 267735 \\
+           & 4 & 1.513441 & 267641 \\
+           & 8 & 1.509649 & 267645 \\
+           & 16 & 1.499131 & 267423 \\
+           & 32 & 1.502043 & 267425 \\
+\midrule
+Threshold multiplier & 2 & 1.517222 & 267735 \\
+                     & \textbf{4} & 1.486254 & 267735 \\
+                     & 8 & 1.488452 & 267735 \\
+                     & 16 & 1.489102 & 267735 \\
+                     & 32 & 1.506372 & 267735 \\
+\bottomrule
 \end{tabular}
-\caption{Corrected preliminary within-wires static/dynamic comparison on GHC with $P=0$. All runs passed validation.}
-\label{tab:ww-schedule-corrected-prelim}
+\caption{Medium-input tuning on GHC at eight threads. Schedule sweep:
+chunk 8, multiplier 4. Chunk sweep: static, multiplier 4.
+Threshold sweep: static, chunk 1. All supplied outputs passed validation.}
+\label{tab:ww-tuning}
 \end{table}
 
-Static scheduling is slightly faster in this comparison, but the difference is
-small.  This suggests that schedule choice alone is not the dominant factor for
-the current within-wires implementation.  The small cost difference on the
-medium input is likely due to schedule-dependent tie-breaking among equal-cost
-candidate routes.
+We kept static scheduling, which used about 2\% less computation time than
+dynamic. Static avoids dynamic work-dispatch overhead, but this modest
+difference does not isolate overhead as the cause. Chunk one had the lowest
+median, about 1.6\% below chunk eight; the full chunk sweep spanned only
+about 1.8\%. These results support a provisional configuration, not a claim
+that scheduling or chunk size dominates performance.
 
-We next swept the threshold multiplier controlling when route scoring switches
-from sequential to parallel.  Table~\ref{tab:ww-threshold-prelim} shows the
-result for the medium input with static scheduling, 8 threads, $P=0$, and 5
-iterations.
+\paragraph{Fine granularity.}
+In \texttt{schedule(static, 1)}, a chunk is one candidate route, not one cell.
+Candidates are assigned round-robin without a dynamic task queue. A candidate
+still performs a complete path evaluation, so a small chunk does not imply
+that each scheduled unit contains only a trivial amount of work.
 
-\begin{table}[h]
+Importantly, all generated candidates for a particular wire have the same
+Manhattan length, $d_x+d_y$, and visit the same number of cells.
+Path lengths vary between wires, but the W-mode parallel loop processes only
+one wire's candidates at a time. Therefore, the chunk-one result cannot be
+explained by balancing different wire lengths. Candidate orientations, bend
+counts, and memory access patterns can differ even with equal path length;
+a fine cyclic assignment may distribute those differences, but these effects
+were not separately measured. The timing data justify choosing chunk one
+provisionally, not a general claim that finer granularity is always better.
+
+The parallel threshold is the multiplier times the thread count: the tested
+values correspond to 16, 32, 64, 128, and 256 candidates at eight threads.
+We retained multiplier four; the corrected medians for 4, 8, and 16 differed
+by only about 0.2\%. The sequential fallback avoids entering a parallel region
+for very small searches, but this sweep does not establish an exact optimal
+cutoff or how frequently each threshold changes the execution path.
+
+Our selected configuration is therefore static scheduling, chunk size one,
+and threshold multiplier four. These decisions are based on medium-input
+measurements and must still be checked on few and abundant inputs and in
+the final scaling evaluation.
+
+\FloatBarrier
+\subsection{Synchronization and Shared Memory}
+
+Threads share both occupancy views, but only read them during candidate scoring,
+so no occupancy locks are needed in W mode. Multiple threads reading the same
+cache line do not cause write-induced coherence invalidations and may benefit
+from shared cache reuse. This is distinct from false sharing, which requires
+writes to a shared cache line; our local bests remain private throughout scoring.
+Actual cache benefits depend on working-set size and scheduling and have not
+yet been quantified with cache-miss measurements.
+
+The worksharing loop has an implicit barrier. Each worker then publishes its
+local best to its own result slot, and the parallel-region end synchronizes
+completion before the main thread reduces those results. Occupancy removal
+and insertion remain sequential, outside the parallel region. Thus no critical
+section or atomic update is needed for each candidate comparison.
+
+We moved the per-thread result-vector allocations outside the iteration and
+wire loops, reusing storage across searches. Before each parallel search,
+cost slots reset to the current wire's starting best; active threads overwrite
+their route slots. Unused slots cannot select stale routes because the final
+reduction accepts only strictly cheaper costs. Buffer reuse showed no
+measurable computation-time improvement, so we retain it as a simple allocation
+cleanup rather than attributing a speedup to it.
+
+Equal-cost route choices can differ across thread counts and schedules because
+the reduction does not impose a deterministic candidate-index tie-break.
+Those choices can affect later wires and explain different final costs without
+an occupancy mismatch. Consequently, some tuning runs follow different routing
+trajectories rather than exactly identical work.
+
+\subsection{Scaling Limits}
+
+Table~\ref{tab:ww-initial-scaling} shows the initial current-implementation
+medium snapshot, using static chunk eight and multiplier four.
+This is a preliminary checkpoint, not the final evaluation of the selected
+chunk-one configuration.
+
+\begin{table}[!htbp]
 \centering
-\begin{tabular}{r r r r r}
-\hline
-Threshold Mult. & Init (s) & Compute (s) & Max Occ. & Cost \\
-\hline
-2 & 0.0277333960 & 4.6140986040 & 2 & 266415 \\
-4 & 0.0261910380 & 4.6017672650 & 2 & 266415 \\
-8 & 0.0277792250 & 4.6910999480 & 2 & 266415 \\
-16 & 0.0278667380 & 4.7385649950 & 2 & 266415 \\
-32 & 0.0276994070 & 4.6931010690 & 2 & 266415 \\
-\hline
+\small
+\begin{tabular}{@{}r r r r r@{}}
+\toprule
+Threads & Compute (s) & Compute speedup & Total speedup & Efficiency \\
+\midrule
+1 & 9.511255 & $1.00\times$ & $1.00\times$ & 100.0\% \\
+2 & 4.941826 & $1.92\times$ & $1.92\times$ & 96.2\% \\
+4 & 2.664504 & $3.57\times$ & $3.53\times$ & 89.2\% \\
+8 & 1.506321 & $6.31\times$ & $6.17\times$ & 78.9\% \\
+\bottomrule
 \end{tabular}
-\caption{Preliminary within-wires threshold multiplier sweep on GHC for \texttt{medium\_wires.txt}. All runs used static scheduling and passed validation.}
-\label{tab:ww-threshold-prelim}
+\caption{Initial medium-input scalability medians on GHC with $P=0.1$,
+five iterations, and batch size one. Speedups use this implementation's
+one-thread baseline; efficiency uses computation speedup.
+Total time is initialization plus computation. All outputs passed validation.}
+\label{tab:ww-initial-scaling}
 \end{table}
 
-The threshold multiplier has only a modest impact in this experiment.  A
-multiplier of 4 was fastest, but the differences are small enough that this knob
-does not appear to dominate performance for the current medium-input run.
+Eight-thread computation speedup was $6.31\times$, with approximately 79\%
+efficiency. The gains are substantial but diminish as threads are added.
 
-We also swept static scheduling chunk sizes using the same medium input and
-threshold multiplier 4.  The chunk-size results varied by only a few percent and
-were somewhat noisy across repeated runs.  Because chunk size did not appear to
-be a dominant performance lever, we kept chunk size 8 as a stable middle-ground
-choice for subsequent within-wires experiments rather than overfitting to one
-noisy timing run.
+We do not expect perfect speedup. Initial route placement, occupancy updates,
+random-route choices, and the final per-wire reduction remain sequential.
+Many searches also enter separate parallel regions and barriers. Small searches
+offer limited candidate-level parallelism, and occupancy reads can be constrained
+by cache behavior or memory bandwidth. Candidate generation is now parallel
+on the parallel path, so sequential full-vector generation is no longer a
+remaining bottleneck in that path. Profiling is needed to distinguish the
+remaining synchronization, memory, and sequential-work costs.
 
+We observed improving performance, not a drop-off, from one through eight
+threads in the initial snapshot. Efficiency declined as thread count increased.
+At higher counts, limited candidates per wire, synchronization overhead, and
+memory-system pressure may flatten or reverse scaling, but this remains a
+hypothesis to test in the PSC experiments.
 
-\subsection{Within-Wires Design Discussion}
-
-Our first within-wires design kept the outer loop over wires sequential and
-parallelized only the exhaustive route search for the current wire.  This choice
-matches the structure of the algorithm: after the current wire is removed from
-the occupancy matrix, all candidate routes for that wire can be evaluated
-independently while only reading the shared occupancy matrix.  We initially used
-a simple sequential baseline for both modes, then added OpenMP parallelism inside
-the route-scoring loop.
-
-Inside the parallel route-scoring loop, each thread maintains a private best
-route and cost.  After the OpenMP loop finishes, the main thread reduces these
-per-thread bests to select the final route for the wire.  This design avoids
-synchronization in the inner scoring loop: threads read the same route list and
-occupancy matrix, but they do not update shared best-route state while scoring.
-Conceptually, this is similar to using a reduction for an accumulated sum: each
-thread accumulates its own partial result independently, and the partial results
-are combined only once at the end.  In our case the reduction operator is
-``choose the lower-cost route'' rather than addition.  This exposes more of the
-route-scoring loop to parallel execution than having every candidate route
-compare against and update a single shared current best.
-The only shared update for the wire is the sequential removal of the old route
-before scoring and insertion of the chosen route afterward.
-
-We considered static and dynamic scheduling, thresholding the number of routes
-required before entering the parallel path, and changing the OpenMP chunk size.
-The preliminary tuning results showed that these knobs had only modest impact.
-Static scheduling was slightly faster than dynamic in the corrected comparison,
-a threshold multiplier of 4 was the best of the tested values, and chunk size did
-not materially change performance.  Based on these results, we chose static
-scheduling with a threshold multiplier of 4 and chunk size 8 as a stable
-configuration for further within-wires measurements.
-
-We do not expect perfect speedup from this approach.  The outer loop over wires
-remains sequential, route generation and final best-route reduction are also
-sequential for each wire, and a new OpenMP parallel region is entered for many
-wire searches.  In addition, candidate scoring performs many reads from the
-occupancy matrix, so cache behavior and memory bandwidth can limit scaling.
-Some wires also expose fewer candidate routes than others, so the amount of
-available route-level parallelism varies over the execution.
-
-At high thread counts, we expect within-wires scaling to eventually flatten or
-possibly drop off.  The number of candidate routes for a single wire limits the
-maximum useful parallelism for that wire, while parallel-region overhead and
-memory-system pressure increase with more threads.  The GHC experiments focus on
-1, 2, 4, and 8 threads; higher-thread behavior will be evaluated more directly
-in the PSC scaling experiments.
-
+\FloatBarrier
 \section{Planned Across-Wires Parallelism}
 
 The across-wires strategy is more complicated because different threads make

@@ -80,8 +80,10 @@ struct Wire {
   compare locally during scoring instead of synchronizing after every candidate
 - Occupancy stays read-only during scoring; removal and insertion occur outside
   the parallel region
-- Current settings: `schedule(static, 8)`, threshold multiplier 4
-- These settings were carried over and need retesting with the new implementation
+- Per-thread result buffers allocate once before the iteration/wire loops
+  Reset costs before each parallel search; active threads overwrite their route slots
+- Selected settings after retuning: `schedule(static, 1)`, threshold multiplier 4
+  The initial scalability snapshot below used chunk 8, not the selected chunk 1
 - Equal-cost tie-breaking can vary across schedules/thread counts, affecting
   later choices and final routing costs even when validation passes
 
@@ -116,6 +118,95 @@ The initialization times and routing statistics below are the supplied outputs.
   allocation, and memory/cache effects are possible limits, not yet isolated
 - Different final costs mean these are not perfectly identical routing trajectories
   Deterministic tie-breaking could make future tuning comparisons cleaner
+
+### Step 2: Result-Buffer Reuse
+
+Moved per-thread best-cost and best-route vector allocation outside the
+iteration/wire loops. Costs reset to the current wire's starting best before
+each parallel search, so unused thread slots cannot select stale results.
+This reuses storage, not route-cost computations. The user observed no
+meaningful computation-time change; retained because the change is simple,
+not because a speedup was established.
+
+### Tuning Methodology
+
+The following sweeps use user-reported medians of three runs per configuration
+on medium input, eight threads, `-m W -p 0.1 -i 5 -b 1`. Computation includes
+initial route placement and occupancy filling. Initialization times and routing
+statistics are the supplied outputs. All completed sweep outputs passed
+validation and had maximum occupancy 3. Vary one knob at a time.
+
+### Step 3: Static vs Dynamic
+
+Chunk size 8, threshold multiplier 4.
+
+| Schedule | Init (s) | Compute (s) | Cost | Validation |
+| --- | ---: | ---: | ---: | --- |
+| static | 0.0411107240 | 1.5045051730 | 267645 | passed |
+| dynamic | 0.0426034640 | 1.5355032590 | 267681 | passed |
+
+Kept static: about 2.0% less computation time. The advantage is modest, not
+evidence of a decisive scheduling win. Static avoids dynamic work-dispatch
+overhead, but this experiment does not isolate the cause of the difference.
+
+### Step 4: Static Chunk Size
+
+Static scheduling, threshold multiplier 4.
+
+| Chunk | Init (s) | Compute (s) | Cost | Validation |
+| ---: | ---: | ---: | ---: | --- |
+| 1 | 0.0425755850 | 1.4861931990 | 267735 | passed |
+| 4 | 0.0416819200 | 1.5134411650 | 267641 | passed |
+| 8 | 0.0416265330 | 1.5096487180 | 267645 | passed |
+| 16 | 0.0402956340 | 1.4991312180 | 267423 | passed |
+| 32 | 0.0409317700 | 1.5020431010 | 267425 | passed |
+
+Selected chunk 1: lowest measured median, about 1.6% less computation time
+than chunk 8. The full spread is about 1.8%, so chunk size had little effect.
+`static, 1` assigns candidates round-robin without a dynamic task queue.
+
+For a single wire, candidates have the same Manhattan length and evaluate
+the same number of cells. Different path lengths across wires do not explain
+this W-mode chunk result. Candidate orientation, bend count, and cache access
+can differ, but their performance effects were not isolated. Different costs
+also reflect different tie-breaking trajectories, limiting direct comparisons.
+Unchunked `schedule(static)` was suggested but has not been measured here.
+
+### Step 5: Threshold Multiplier
+
+Static scheduling, chunk size 1. At eight threads, multipliers 2, 4, 8, 16,
+and 32 correspond to parallel thresholds of 16, 32, 64, 128, and 256 candidates.
+
+| Multiplier | Init (s) | Compute (s) | Cost | Validation |
+| ---: | ---: | ---: | ---: | --- |
+| 2 | 0.0423112400 | 1.5172221380 | 267735 | passed |
+| 4 | 0.0411906730 | 1.4862542700 | 267735 | passed |
+| 8 | 0.0457532980 | 1.4884520000 | 267735 | passed |
+| 16 | 0.0426234770 | 1.4891024920 | 267735 | passed |
+| 32 | 0.0408274140 | 1.5063717380 | 267735 | passed |
+
+The multiplier-8 computation value is a user-supplied correction to the
+originally pasted 1.4844516550 s, not a recomputed median from raw runs.
+
+Kept multiplier 4: lowest corrected median. Multipliers 4, 8, and 16 are
+within about 0.2%; the entire sweep spans about 2.1%. These results do not
+establish a strong threshold effect. All configurations returned the same cost.
+The candidate-count threshold retains a sequential fallback for small searches.
+
+An earlier threshold sweep had an unconfirmed chunk setting and is excluded
+from this controlled comparison. A roughly 68-second multiplier-32 run is
+recorded as an unexplained anomaly, separate from the representative result
+above; its cause was not established.
+
+### Final Tuning Decisions
+
+- Keep static scheduling, chunk size 1, and threshold multiplier 4
+- Keep reusable result buffers, with no measured speedup attributed to them
+- Keep the sequential fallback based on exact candidate count
+- Scheduling, chunk, and threshold differences were modest; do not overstate
+  the precision of the winning settings
+- These are medium-input tuning decisions; rerun scalability with the selected
+  settings and evaluate few/abundant before treating them as general conclusions
 
 ## Testing Notes
 
@@ -159,22 +250,19 @@ Across-wires parallelism is still pending; the current A branch is sequential.
 
 ## Potential Improvements
 
-1. Retest static vs dynamic, chunk size, and threshold with the new implementation
-   Keep other parameters fixed and use repeated runs
-2. Reuse per-thread result buffers instead of allocating them for every wire
-3. Consider a persistent parallel region to reduce repeated team-entry overhead
+1. Consider a persistent parallel region to reduce repeated team-entry overhead
    Preserve barriers around occupancy updates and per-wire result reduction
-4. Measure route counts, sequential/parallel frequency, scoring/update time,
+2. Measure route counts, sequential/parallel frequency, scoring/update time,
    and cache misses to identify the remaining bottleneck
-5. Consider flat storage for each occupancy view to remove vector indirection
+3. Consider flat storage for each occupancy view to remove vector indirection
    Preserve output/checker compatibility and measure whether it actually helps
-6. Add deterministic candidate-index tie-breaking for more controlled comparisons
-7. Evaluate across-wires batch size, lock granularity, and locality-aware ordering
+4. Add deterministic candidate-index tie-breaking for more controlled comparisons
+5. Evaluate across-wires batch size, lock granularity, and locality-aware ordering
    after implementing a correct parallel baseline
 
 ## Next Steps
 
-1. Retune W's scheduling knobs using the current scalability snapshot as a baseline
+1. Rerun W scaling at 1, 2, 4, and 8 threads with static, chunk 1, multiplier 4
 2. Complete few/medium/abundant performance and cost evaluation
 3. Implement and measure across-wires parallelism
 

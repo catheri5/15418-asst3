@@ -4,11 +4,19 @@
 \providecommand\HyField@AuxAddToCoFields[2]{}
 \@writefile{toc}{\contentsline {section}{\numberline {1}Implementation Status}{1}{section.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {2}Route Generation and Cost Calculation}{1}{section.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {3}Within-Wires Parallelism}{2}{section.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Preliminary Within-Wires Tuning}{2}{subsection.3.1}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Corrected preliminary within-wires static/dynamic comparison on GHC with $P=0$. All runs passed validation.}}{3}{table.1}\protected@file@percent }
-\newlabel{tab:ww-schedule-corrected-prelim}{{1}{3}{Corrected preliminary within-wires static/dynamic comparison on GHC with $P=0$. All runs passed validation}{table.1}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {4}Planned Across-Wires Parallelism}{3}{section.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {5}Optimization Hypotheses}{3}{section.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {6}Experimental Plan}{4}{section.6}\protected@file@percent }
-\gdef \@abspage@last{4}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Sequential Baseline Optimization}{2}{section.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Exploratory baseline progression, with times shown to three significant figures. The 5.89 s and 2.68 s values were reported approximately. The 3.17 s value is a representative run, with a reported median of approximately 3.15 s.}}{2}{table.1}\protected@file@percent }
+\newlabel{tab:baseline-progress}{{1}{2}{Exploratory baseline progression, with times shown to three significant figures. The 5.89 s and 2.68 s values were reported approximately. The 3.17 s value is a representative run, with a reported median of approximately 3.15 s}{table.1}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Within-Wires Parallelism}{3}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Tuning Methodology and Decisions}{4}{subsection.4.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Medium-input tuning on GHC at eight threads. Schedule sweep: chunk 8, multiplier 4. Chunk sweep: static, multiplier 4. Threshold sweep: static, chunk 1. All supplied outputs passed validation.}}{4}{table.2}\protected@file@percent }
+\newlabel{tab:ww-tuning}{{2}{4}{Medium-input tuning on GHC at eight threads. Schedule sweep: chunk 8, multiplier 4. Chunk sweep: static, multiplier 4. Threshold sweep: static, chunk 1. All supplied outputs passed validation}{table.2}{}}
+\@writefile{toc}{\contentsline {paragraph}{Fine granularity.}{5}{section*.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Synchronization and Shared Memory}{5}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Scaling Limits}{6}{subsection.4.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Initial medium-input scalability medians on GHC with $P=0.1$, five iterations, and batch size one. Speedups use this implementation's one-thread baseline; efficiency uses computation speedup. Total time is initialization plus computation. All outputs passed validation.}}{6}{table.3}\protected@file@percent }
+\newlabel{tab:ww-initial-scaling}{{3}{6}{Initial medium-input scalability medians on GHC with $P=0.1$, five iterations, and batch size one. Speedups use this implementation's one-thread baseline; efficiency uses computation speedup. Total time is initialization plus computation. All outputs passed validation}{table.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Planned Across-Wires Parallelism}{7}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Optimization Hypotheses}{7}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7}Experimental Plan}{8}{section.7}\protected@file@percent }
+\gdef \@abspage@last{8}
