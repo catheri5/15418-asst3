@@ -656,7 +656,7 @@ int main(int argc, char *argv[]) {
       for (int w = 0; w < num_wires; w++) {
         Wire curr = wires[w];
 
-        // remove wire from current occupancy matrix
+        // Remove wire from current occupancy matrix
         add_wire_to_occupancy_baseline(curr, occupancy, occupancy_columns, -1);
 
         Point start = curr.pts[0];
@@ -665,7 +665,7 @@ int main(int argc, char *argv[]) {
         // Count candidates without constructing or storing them
         const long long num_routes = count_routes(start, end);
 
-        // baseline: compare against current wire route
+        // Baseline: compare against current wire route
         Wire best = curr;
 
         // Random route choosing with probability P
@@ -676,7 +676,7 @@ int main(int argc, char *argv[]) {
           long long best_cost = calculate_wire_cost_baseline(
               curr, occupancy, occupancy_columns);
 
-          // check if above parallel threshold
+          // Check if above parallel threshold
           const long long threshold =
               1LL * W_WIRE_PARALLEL_THRESHOLD_MULTIPLIER * num_threads;
           if (num_routes >= threshold) { // execute in parallel

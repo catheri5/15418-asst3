@@ -1,258 +1,190 @@
 # Assignment 3 Implementation Roadmap
 
-Implement and benchmark one stage at a time. Keep the sequential baseline
-correct and easy to compare against while adding parallelism.
+## Resume Here
 
-## 1. Lock Down Baseline Correctness
+- Baseline representation, route enumeration, and within-wires parallelism are implemented
+- W tuning selected static scheduling, chunk 1, and threshold multiplier 4
+- Tentative GHC W timing results for all three inputs at 1/2/4/8 threads are recorded
+- A now has a batched OpenMP baseline with atomic occupancy reads/updates
+- Next action: run the small GHC A checks below, then measure A before optimizing it
+- Final graphs, cache-miss analysis, routing images, sensitivity studies, and PSC work remain
 
-- Use the keypoint `Wire` representation:
-  - `Point pts[MAX_PTS_PER_WIRE]`
-  - `num_pts`
-  - `to_validate_format()` converts to the checker/output format.
-- Initialize each wire to a legal route:
-  - straight route if endpoints share a row or column
-  - otherwise horizontal-first one-bend route
-- Build the occupancy matrix by adding every initial wire once.
-- Generate all legal candidate routes for a wire:
-  - straight route for collinear endpoints
-  - horizontal-first and vertical-first routes with at most two bends
-  - exactly three-bend routes through strictly interior points
-- For each reroute decision:
-  - remove the current wire from occupancy
-  - score current and candidate routes using `(occupancy[y][x] + 1)^2`
-  - keep the lowest-cost route, preserving the old route on ties
-  - add the selected route back to occupancy
-- For now, both `-m W` and `-m A` may call the same sequential baseline.
+Detailed experiment numbers live in `ASST3_WIREROUTE_LOG.md`; the report contains
+the design discussion, tuning summary, and tentative W performance tables.
 
-Expected result: `Validate Passed: no mismatches.`
+## 1. Completed Baseline Work
 
-Before moving on, also test `-m A` with the same inputs to confirm both modes
-still share the correct baseline behavior.
+- `Wire` stores up to five named `Point` keypoints plus `num_pts`
+- `make_wire_from_points()` removes adjacent duplicate points
+- `to_validate_format()` adapts wires to the checker/output format
+- Input reading stores endpoints; computation constructs legal initial routes and fills occupancy
+- Exhaustive enumeration includes both orientations and all legal routes up to three bends
+- `count_routes()` gives exact loop bounds without constructing candidates
+- `route_from_index()` constructs one candidate at a time in the original enumeration order
+- Every candidate is scored fully; no early cutoff, prefix sums, or reused route costs
+- Fixed `P` selects a uniformly random candidate in the random branch
+- Axis-specific loops simplify traversal
+- Row and column occupancy views give contiguous horizontal and vertical reads
+- Updates maintain both views; each bend and the final endpoint are counted once
 
-## 2. Implement Within-Wires Parallelism First
+Do not spend time adding `reserve()` to the legacy route vector: current W/A
+computation paths no longer store all candidate routes.
 
-Plan:
+## 2. Current Within-Wires Design
 
-- For one wire, generate all candidate routes.
-- If the number of routes is small, score sequentially to avoid OpenMP overhead.
-- If the number of routes is large, score candidates in parallel:
+- Iterations and the outer wire loop remain sequential
+- Remove the old route from both occupancy views
+- Generate and score candidates in parallel only above the route-count threshold
+- Accumulate private thread bests and combine them after the parallel region
+- Keep occupancy read-only during scoring and insert the chosen route afterward
+- Per-thread result vectors allocate once and reset costs per search
+- Buffer reuse showed no measurable improvement; do not attribute a speedup to it
+
+Selected student-initialization constants:
 
 ```cpp
-#pragma omp parallel for schedule(dynamic, chunk_size)
-for (int r = 0; r < routes.size(); r++) {
-  costs[r] = calculate_wire_cost_minimal(routes[r], occupancy);
-}
+const int W_WIRE_PARALLEL_THRESHOLD_MULTIPLIER = 4;
+const int W_WIRE_CHUNK_SIZE = 1;
 ```
 
-- Reduce to the best route after scoring.
-- Apply one occupancy update for the selected route.
+The pragma is `schedule(static, W_WIRE_CHUNK_SIZE)`. A W chunk contains candidate
+routes for the same wire, not different wires. Those candidates have equal
+Manhattan length; chunk 1's small advantage is not evidence of wire-length balancing.
 
-Things to experiment with:
+Static/dynamic, chunks 1/4/8/16/32, and multipliers 2/4/8/16/32 were retested
+using medium input and medians of three runs. Differences were modest.
+Equal-cost tie-breaking can change later routes and final cost.
 
-- Threshold for switching from sequential to parallel route scoring - 2, 4, 8, 16, 32
-- `schedule(static)`.
-- `schedule(dynamic, 1)`.
-- `schedule(dynamic, 8)`, `16`, or `32`.
+## 3. Current Across-Wires Baseline
 
-Design goal:
+- One persistent parallel region covers all iterations
+- Tasks are batches of up to `-b` wires
+- Each worker searches its batch's wires sequentially, without nested W parallelism
+- Choose all routes in a batch before applying that batch's updates
+- During scoring, old routes remain in occupancy
+- `cell_on_wire()` identifies the current wire's old contribution
+- `calculate_wire_cost_across()` uses `(value - on_old_route + 1)^2`
+- `add_wire_to_occupancy_across()` atomically removes old routes and inserts chosen routes
+- Atomic reads avoid C++ data races with concurrent updates
+- Both occupancy views are updated; they agree after commits complete
+- Each worker owns its RNG and reusable batch-route buffer
+- An end-of-worksharing-loop barrier finishes all commits before the next iteration
+- Partial final batches and `B` larger than the wire count are handled
 
-- Expose more independent route-scoring tasks than the target thread count.
-- On GHC, the required measurements use 1, 2, 4, and 8 threads, so the first
-  practical goal is enough route work to keep 8 threads busy.
-- On PSC, the required scaling reaches 128 threads, so later experiments need
-  much more available work.
+Helper correctness and batch-reference checks passed. Full OpenMP execution and
+performance on GHC still need user-run checks; no A timing results have been supplied.
 
-Cache/locality notes:
+## 4. Quick GHC Check
 
-- Horizontal occupancy access is more cache-friendly because `occupancy[y][x]`
-  stores each row contiguously.
-- Vertical segments jump between rows, so they may have worse locality.
-- Candidate routes for the same wire touch the same bounding box, so
-  within-wires may have better locality than arbitrary across-wires scheduling.
-- Later possible optimization: use a flat occupancy array
-  `occupancy[y * dim_x + x]` if cache miss data suggests row-vector overhead or
-  locality problems.
-
-## 3. Measure Within-Wires
-
-Collect correctness and timing before making the design more complex.
-
-Inputs to start with:
+From the `code` directory after syncing:
 
 ```bash
-inputs/timeinput/few_wires.txt
-inputs/timeinput/medium_wires.txt
-inputs/timeinput/abundant_wires.txt
+make -B
+./wireroute -f inputs/debug/sample_8_8wires.txt -n 4 -p 0.1 -i 5 -m A -b 2
+./wireroute -f inputs/debug/sample_8_8wires.txt -n 4 -p 0.1 -i 5 -m A -b 3
 ```
 
-Measurements needed on GHC:
+Expected: `Validate Passed: no mismatches.` The batch-3 case tests the partial
+final batch because the input has eight wires. These are quick correctness
+checks, not performance benchmarks. Outcomes are pending.
 
-- 1, 2, 4, 8 threads
-- total time
-- computation time
-- final maximum occupancy
-- final total cost
-- cache misses with `perf stat -e cache-misses`
+Before timing, expand small-input checks to 1/2/4/8 threads and batch sizes
+1/2/3/8. Include `P=0`, `P=0.1`, and `P=1` to cover both route-choice branches.
 
-Watch for:
+## 5. Across-Wires Knobs and First Measurements
 
-- small wires producing too few route tasks
-- OpenMP overhead dominating on small inputs
-- route generation cost becoming significant
-- non-ideal speedup from memory bandwidth/cache misses
-
-## 4. Implement Across-Wires Baseline
-
-Across-wires parallelism is less independent because route choices mutate the
-shared occupancy matrix. Expect more tradeoffs between speed, synchronization,
-staleness, and routing quality.
-
-Required shape:
-
-- Tasks are batches of wires.
-- Batch size comes from `-b`.
-- A worker processes wires in its batch sequentially.
-- Occupancy updates for the batch happen according to the assignment's batching
-  model.
-
-Initial simple design:
+Constants beside the W knobs in main's student-writable initialization area:
 
 ```cpp
-#pragma omp parallel for schedule(dynamic, 1)
-for (int batch_start = 0; batch_start < num_wires; batch_start += batch_size) {
-  process one batch
-}
+const omp_sched_t A_WIRE_SCHEDULE = omp_sched_dynamic;
+const int A_WIRE_CHUNK_SIZE = 1;
 ```
 
-Start with coarse correctness, then refine synchronization.
+`omp_set_schedule()` configures the calling thread before the parallel region.
+Workers inherit it, and A's loop uses `schedule(runtime)`.
 
-## 5. Across-Wires Synchronization Experiments
+| Knob | Meaning | First values to test |
+| --- | --- | --- |
+| Schedule | How batches are assigned | `omp_sched_static`, `omp_sched_dynamic` |
+| Chunk | Batches grouped per scheduling assignment | 1, 2, 4, 8 |
+| `-b` | Wires chosen before each batch commits | 1, 2, 4, 8, 16 |
 
-Main knobs:
+Chunk size and batch size are different: a chunk of four batches still commits
+each batch separately. It does not delay all four batches' updates together.
+No across-wires threshold multiplier has been introduced.
 
-- Batch size `B`.
-- OpenMP schedule and chunk size.
-- Lock granularity for occupancy updates.
-- Whether route decisions physically remove wires early or logically factor out
-  the current wire during scoring.
+Recommended experiment order:
 
-Potential lock/update strategies:
+1. Establish an untuned A medium baseline at 1 and 8 threads, dynamic, chunk 1, `B=1`
+2. Compare static vs dynamic at eight threads, keeping chunk 1 and `B=1`
+3. Fix the schedule and chunk 1, then sweep `B=1/2/4/8/16`
+4. Fix schedule and batch size, then sweep chunk 1/2/4/8
+5. Check scaling at 1/2/4/8 threads with the chosen configuration
 
-- One global lock around occupancy updates.
-  - simplest
-  - likely high contention
-- Row-level locks.
-  - moderate complexity
-  - may improve concurrency for wires in different rows
-- Tile/block-level locks.
-  - more complex
-  - could reduce contention if wires are spatially separated
-- Per-cell locking is probably too fine-grained unless measurements suggest a
-  clear need.
+Use medium input, `P=0.1`, five iterations, and medians of three runs for tuning.
+Track validation, occupancy, and routing cost as well as time. A results can
+vary due to concurrent updates and which thread's RNG stream handles each wire.
+Keep enough batches and assignments to occupy the requested threads.
+Rebuild with `make -B` whenever constants change.
 
-Use increment/decrement updates rather than overwriting occupancy entries,
-because other threads may update nearby or overlapping cells.
+```bash
+./wireroute -f inputs/timeinput/medium_wires.txt -n 8 -p 0.1 -i 5 -m A -b 1
+```
 
-## 6. Across-Wires Scheduling Experiments
+For direct comparison with the handout reference, use `P=0.1`, five iterations,
+and `B=1`. Keep a fixed-parameter baseline separate from batch-size experiments.
 
-Candidate experiments:
+## 6. Later Across-Wires Experiments
 
-- Dynamic scheduling over batches to reduce stragglers.
-- Longest-task-first ordering based on bounding-box area or candidate-route
-  count.
-- Compare input order vs sorted-by-route-count order.
-- Compare small `B` for freshness/load balance vs larger `B` for lower update
-  overhead.
+- Measure scoring, update, scheduling, and synchronization costs before adding complexity
+- Compare atomic updates with global/row/tile locking only if contention warrants it
+- Preserve safe concurrent reads when changing synchronization
+  Locking only writers does not make plain concurrent reads/writes race-free
+- Use increment/decrement updates rather than overwriting occupancy values
+- Explore longest-work-first ordering using route count times path length as a work estimate
+- Compare original order against sorted order, including sorting overhead
+- Try locality-aware batching by midpoint or quadrant as a measured experiment
+- Handle long cross-region wires explicitly rather than dropping them
+- Nearby wires can share cached data but can also overlap and contend more
+- Keep the assignment's update timing; no frozen iteration snapshots or extra staleness
 
-Potential locality experiment, not first implementation:
+## 7. Finish the GHC and PSC Evaluation
 
-- Group wires by bounding-box midpoint or quadrant before batching.
-- Treat long cross-region wires as large tasks and schedule them early.
-- Hypothesis: spatial grouping may improve cache locality in occupancy reads
-  and updates.
-- Risk: nearby wires are also more likely to overlap, which can increase
-  contention and reduce routing quality.
-- Only pursue if cache miss data or synchronization behavior suggests locality
-  is worth the extra work.
+The twelve tentative GHC W outputs cover few/medium/abundant at 1/2/4/8 threads.
+Confirm their compiled knobs and repetition counts, and the first abundant run's
+inferred one-thread label, before treating them as final results.
 
-## 7. Report and Write-Up Data
+Remaining required deliverables:
 
-Keep a running log of:
+- GHC: both W and A, all three timing inputs, 1/2/4/8 threads
+- Total and computation speedup graphs using each configuration's own one-thread baseline
+- GHC total and mean per-thread cache-miss plots with interpretation
+- Medium-input routing/occupancy images at eight threads for both modes
+- A probability sensitivity at 1/8 threads with `P=0.01/0.1/0.5`
+- A problem-size sensitivity using `problemsize/gridsize` and `problemsize/numwires`
+- PSC: both modes, all three timing inputs, 1/2/4/8/16/32/64/128 threads
+- PSC total/computation speedup plots and comparison with GHC
+- Final design discussion explaining observed limits, not just predicted bottlenecks
 
-- design changes
-- correctness status
-- timing results
-- cache miss results
-- cost/max-occupancy results
-- failed ideas and why they were rejected
+Record the input, exact command, compiled knobs, machine, repeat count, timing
+definition, validation, cost, and occupancy for every result set.
+Computation includes initial route placement and occupancy filling; printing,
+validation, and writing output remain outside the starter computation timer.
 
-For each final plot, preserve:
+## 8. Optional Improvements
 
-- exact input file
-- command line
-- thread count
-- mode
-- batch size
-- annealing probability
-- iteration count
-- machine name
+- Persistent parallel region for W; A already has one
+- Deterministic candidate-index tie-breaking for cleaner W comparisons
+- Flat storage for both occupancy views, if indirection or cache data warrants it
+- Instrument candidate counts and sequential/parallel search frequency
 
-## Intentionally Deferred
+Custom distributed queues, work-stealing deques, lock-free structures, and
+complicated task graphs remain deferred. Use the existing OpenMP baseline to
+find a measured bottleneck first.
 
-Do not start with these:
+## Documentation
 
-- custom work-stealing deques
-- lock-free queues
-- spatial batching
-- flat occupancy conversion
-- complicated OpenMP task graphs
-- PSC 128-thread tuning
-
-These may become useful later, but the next useful step is a measured
-within-wires implementation against the correct sequential baseline.
-
-
-## Resume Point: Next Optimization Pass
-
-Current within-wires state:
-
-- Baseline correctness is implemented with keypoint wires and occupancy updates.
-- Initial route construction is now inside the compute section for final timing
-  compatibility.
-- Within-wires route scoring uses per-thread local bests and a final reduction.
-- Current chosen knobs: static schedule, threshold multiplier 4, chunk size 8.
-
-Next recommended sequence when resuming:
-
-1. Add `routes.reserve(...)` in `generate_routes`.
-   - Low-risk and easy to test.
-   - Does not violate the no-reuse/no-prefix-sum rule.
-
-2. Collect a fresh `few_wires.txt` and `medium_wires.txt` `n=1` timing after
-   `reserve`.
-   - Compare against current absolute runtime and handout reference.
-
-3. If absolute runtime is still high, consider replacing `generate_routes` +
-   stored vector with on-the-fly candidate generation/scoring.
-   - Sequential version: generate route, score route, update best immediately.
-   - Parallel version: map route index to route, score fully, local-best reduce.
-
-4. Add deterministic tie-breaking by route index before large final sweeps.
-   - This should make cost/output comparisons more stable across schedules and
-     thread counts.
-
-5. Add route-search instrumentation if tuning remains confusing.
-   - Counts to print temporarily:
-     - total route searches
-     - parallel route searches
-     - sequential route searches
-     - average routes per search
-     - max routes per search
-
-6. Once within-wires is stable, collect required final GHC W-mode data:
-   - `few_wires.txt`, `medium_wires.txt`, `abundant_wires.txt`
-   - `-n 1,2,4,8`
-   - `-p 0.1 -i 5 -m W -b 1`
-   - timing, cost, max occupancy, validation, cache misses
-
-7. Then move on to across-wires.
+- Keep experiment history and handoff details in the partner log
+- Add report material only when it supports the writeup prompts or measured conclusions
+- Keep exploratory anomalies separate from representative measurements
+- Preserve approximate historical timings as approximate; do not invent precision

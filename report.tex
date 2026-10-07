@@ -174,14 +174,16 @@ Chunk size & \textbf{1} & 1.486193 & 267735 \\
 \midrule
 Threshold multiplier & 2 & 1.517222 & 267735 \\
                      & \textbf{4} & 1.486254 & 267735 \\
-                     & 8 & 1.488452 & 267735 \\
+                     & 8 & 1.488452$^{*}$ & 267735 \\
                      & 16 & 1.489102 & 267735 \\
                      & 32 & 1.506372 & 267735 \\
 \bottomrule
 \end{tabular}
 \caption{Medium-input tuning on GHC at eight threads. Schedule sweep:
 chunk 8, multiplier 4. Chunk sweep: static, multiplier 4.
-Threshold sweep: static, chunk 1. All supplied outputs passed validation.}
+Threshold sweep: static, chunk 1. All supplied outputs passed validation.
+$^{*}$The multiplier-8 time is a supplied correction to the earlier recorded
+value, not a median recomputed from raw runs.}
 \label{tab:ww-tuning}
 \end{table}
 
@@ -326,6 +328,103 @@ threads tend to work on nearby occupancy cells.  This may improve cache locality
 but it may also increase contention because nearby wires are more likely to
 overlap.  We will only pursue this direction if cache miss or synchronization
 measurements suggest that the extra work is justified.
+
+\FloatBarrier
+\section{Tentative GHC Within-Wires Results}
+
+Tables~\ref{tab:ghc-ww-few}--\ref{tab:ghc-ww-abundant} record the supplied
+W-mode outputs for the three required timing inputs. Each input uses a
+$2048\times2048$ grid, $P=0.1$, five iterations, and batch size one.
+These tables are tentative: repetition counts and compiled scheduling,
+chunk-size, and threshold settings remain to be confirmed before finalizing
+the experimental configuration. We do not label these supplied outputs as
+three-run medians without that confirmation.
+
+Computation time includes initial route placement and occupancy filling.
+Total time is initialization plus computation. For each input separately,
+speedups use that input's own one-thread baseline:
+\[
+S_p^{\mathrm{compute}}=\frac{C_1}{C_p},
+\qquad
+S_p^{\mathrm{total}}=\frac{I_1+C_1}{I_p+C_p}.
+\]
+Times are displayed to three significant figures; speedups are calculated
+from the unrounded supplied values, not the rounded table entries.
+
+\begin{table}[!htbp]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}rrrrrrrr@{}}
+\toprule
+Threads & Init (s) & Compute (s) & Total (s) & Compute $S_p$ & Total $S_p$ & Max occ. & Cost \\
+\midrule
+1 & 0.0390 & 2.82 & 2.86 & $1.00\times$ & $1.00\times$ & 2 & 29240 \\
+2 & 0.0439 & 1.54 & 1.58 & $1.83\times$ & $1.81\times$ & 2 & 29240 \\
+4 & 0.0411 & 0.889 & 0.930 & $3.17\times$ & $3.08\times$ & 2 & 29240 \\
+8 & 0.0439 & 0.555 & 0.599 & $5.08\times$ & $4.77\times$ & 2 & 29240 \\
+\bottomrule
+\end{tabular}
+\caption{Tentative GHC within-wires results for \texttt{few\_wires.txt}, 128 wires.
+All supplied outputs passed validation.}
+\label{tab:ghc-ww-few}
+\end{table}
+
+\begin{table}[!htbp]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}rrrrrrrr@{}}
+\toprule
+Threads & Init (s) & Compute (s) & Total (s) & Compute $S_p$ & Total $S_p$ & Max occ. & Cost \\
+\midrule
+1 & 0.0456 & 9.34 & 9.39 & $1.00\times$ & $1.00\times$ & 3 & 267723 \\
+2 & 0.0460 & 4.87 & 4.91 & $1.92\times$ & $1.91\times$ & 3 & 267957 \\
+4 & 0.0456 & 2.62 & 2.66 & $3.57\times$ & $3.52\times$ & 3 & 267771 \\
+8 & 0.0460 & 1.48 & 1.52 & $6.32\times$ & $6.16\times$ & 3 & 267735 \\
+\bottomrule
+\end{tabular}
+\caption{Tentative GHC within-wires results for \texttt{medium\_wires.txt}, 2048 wires.
+All supplied outputs passed validation.}
+\label{tab:ghc-ww-medium}
+\end{table}
+
+\begin{table}[!htbp]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}rrrrrrrr@{}}
+\toprule
+Threads & Init (s) & Compute (s) & Total (s) & Compute $S_p$ & Total $S_p$ & Max occ. & Cost \\
+\midrule
+1$^{*}$ & 0.0616 & 24.3 & 24.4 & $1.00\times$ & $1.00\times$ & 4 & 1539328 \\
+2 & 0.0625 & 12.6 & 12.7 & $1.93\times$ & $1.92\times$ & 4 & 1539380 \\
+4 & 0.0621 & 6.76 & 6.83 & $3.59\times$ & $3.57\times$ & 4 & 1538772 \\
+8 & 0.0614 & 3.75 & 3.81 & $6.48\times$ & $6.39\times$ & 4 & 1539104 \\
+\bottomrule
+\end{tabular}
+\caption{Tentative GHC within-wires results for \texttt{abundant\_wires.txt}, 16384 wires.
+All supplied outputs passed validation. $^{*}$The first run's thread-count line
+was omitted; one thread is inferred from the supplied order and needs confirmation.}
+\label{tab:ghc-ww-abundant}
+\end{table}
+
+\FloatBarrier
+At eight threads, computation speedup is $5.08\times$ for few,
+$6.32\times$ for medium, and $6.48\times$ for abundant wires.
+Total-time speedups are lower: $4.77\times$, $6.16\times$, and
+$6.39\times$, respectively. Initialization is a larger fraction of the
+short few-input run, so it reduces total speedup more noticeably there.
+The larger inputs show better measured computation scaling, consistent
+with more useful work amortizing overhead, although profiling is needed
+to separate that explanation from memory-system and workload effects.
+
+All three inputs improve monotonically from one through eight threads,
+with no observed performance drop-off. Few retains cost 29240 at every
+thread count; medium and abundant costs vary slightly, consistent with
+the schedule-dependent equal-cost choices discussed earlier.
+These tables do not replace the required speedup graphs, cache-miss
+measurements, routing images, or PSC evaluation.
 
 \section{Experimental Plan}
 
