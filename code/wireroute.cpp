@@ -553,6 +553,70 @@ static long long calculate_wire_cost_across(
   return cost;
 }
 
+// Fully score one A-mode candidate and keep the existing best on ties
+static void try_candidate_route_across(
+    const Wire &candidate, const Wire &current,
+    const std::vector<std::vector<int>> &occupancy,
+    const std::vector<std::vector<int>> &occupancy_columns,
+    Wire &best, long long &best_cost) {
+  const long long cost = calculate_wire_cost_across(
+      candidate, current, occupancy, occupancy_columns);
+  if (cost < best_cost) {
+    best_cost = cost;
+    best = candidate;
+  }
+}
+
+// Generate A-mode candidates directly in the original route order
+static void try_routes_across(
+    const Wire &current,
+    const std::vector<std::vector<int>> &occupancy,
+    const std::vector<std::vector<int>> &occupancy_columns,
+    Wire &best, long long &best_cost) {
+  const Point start = current.pts[0];
+  const Point end = current.pts[current.num_pts - 1];
+  if (start.x == end.x || start.y == end.y) {
+    try_candidate_route_across(make_wire_from_points({start, end}), current,
+                               occupancy, occupancy_columns, best, best_cost);
+    return;
+  }
+
+  const int min_x = std::min(start.x, end.x);
+  const int max_x = std::max(start.x, end.x);
+  const int min_y = std::min(start.y, end.y);
+  const int max_y = std::max(start.y, end.y);
+
+  // Horizontal-first routes with at most two bends
+  for (int x = min_x; x <= max_x; x++) {
+    if (x == start.x) continue;
+    try_candidate_route_across(
+        make_wire_from_points({start, {x, start.y}, {x, end.y}, end}), current,
+        occupancy, occupancy_columns, best, best_cost);
+  }
+
+  // Vertical-first routes with at most two bends
+  for (int y = min_y; y <= max_y; y++) {
+    if (y == start.y) continue;
+    try_candidate_route_across(
+        make_wire_from_points({start, {start.x, y}, {end.x, y}, end}), current,
+        occupancy, occupancy_columns, best, best_cost);
+  }
+
+  // Both three-bend orientations for each interior point
+  for (int x = min_x + 1; x < max_x; x++) {
+    for (int y = min_y + 1; y < max_y; y++) {
+      try_candidate_route_across(
+          make_wire_from_points(
+              {start, {x, start.y}, {x, y}, {end.x, y}, end}), current,
+          occupancy, occupancy_columns, best, best_cost);
+      try_candidate_route_across(
+          make_wire_from_points(
+              {start, {start.x, y}, {x, y}, {x, end.y}, end}), current,
+          occupancy, occupancy_columns, best, best_cost);
+    }
+  }
+}
+
 // Protect overlapping updates in both occupancy views
 static void add_wire_to_occupancy_across(
     const Wire &wire,
@@ -707,6 +771,23 @@ static void route_within_wires(
   }
 }
 
+// Compare only the keypoints that belong to each route
+static bool same_wire_route(const Wire &first, const Wire &second) {
+  if (first.num_pts != second.num_pts) return false;
+  for (int i = 0; i < first.num_pts; i++) {
+    if (first.pts[i].x != second.pts[i].x ||
+        first.pts[i].y != second.pts[i].y) {
+      return false;
+    }
+  }
+  return true;
+}
+
+struct RouteUpdate {
+  int wire_index;
+  Wire route;
+};
+
 // Choose and commit batches of wires in parallel
 static void route_across_wires(
     std::vector<Wire> &wires,
@@ -722,18 +803,20 @@ static void route_across_wires(
   const int num_batches =
       num_wires / params.batch_size + (num_wires % params.batch_size != 0);
 
-  // Each worker owns its RNG and temporary batch routes
+  // Each worker owns its RNG and pending route changes
   #pragma omp parallel
   {
     std::mt19937 thread_rng(omp_get_thread_num());
     std::uniform_real_distribution<double> thread_route_choice_dist(0.0, 1.0);
-    std::vector<Wire> batch_routes(std::min(params.batch_size, num_wires));
+    std::vector<RouteUpdate> batch_routes;
+    batch_routes.reserve(std::min(params.batch_size, num_wires));
 
     for (int iter = 0; iter < params.SA_iters; iter++) {
       #pragma omp for schedule(dynamic, A_WIRE_CHUNK_SIZE)
       for (int batch = 0; batch < num_batches; batch++) {
         const int batch_start = batch * params.batch_size;
         const int batch_count = std::min(params.batch_size, num_wires - batch_start);
+        batch_routes.clear();
 
         // Choose every route before applying this batch's updates
         for (int i = 0; i < batch_count; i++) {
@@ -747,28 +830,23 @@ static void route_across_wires(
           } else {
             long long best_cost = calculate_wire_cost_across(
                 curr, curr, occupancy, occupancy_columns);
-            const long long num_routes = count_routes(start, end);
-            for (long long r = 0; r < num_routes; r++) {
-              const Wire candidate = route_from_index(start, end, r);
-              const long long cost = calculate_wire_cost_across(
-                  candidate, curr, occupancy, occupancy_columns);
-              if (cost < best_cost) {
-                best_cost = cost;
-                best = candidate;
-              }
-            }
+            try_routes_across(curr, occupancy, occupancy_columns,
+                              best, best_cost);
           }
-          batch_routes[i] = best;
+          // Remember only changed routes, without updating occupancy yet
+          if (!same_wire_route(curr, best)) {
+            batch_routes.push_back({batch_start + i, best});
+          }
         }
 
-        // Commit the batch with atomic increments and decrements
-        for (int i = 0; i < batch_count; i++) {
-          const int w = batch_start + i;
+        // Commit only the changed wires after choosing the entire batch
+        for (const RouteUpdate &update : batch_routes) {
+          const int w = update.wire_index;
           add_wire_to_occupancy_across(
               wires[w], occupancy, occupancy_columns, -1);
           add_wire_to_occupancy_across(
-              batch_routes[i], occupancy, occupancy_columns, 1);
-          wires[w] = batch_routes[i];
+              update.route, occupancy, occupancy_columns, 1);
+          wires[w] = update.route;
         }
       }
       // The worksharing barrier finishes all commits before the next iteration
