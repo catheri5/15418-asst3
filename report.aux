@@ -4,11 +4,53 @@
 \providecommand\HyField@AuxAddToCoFields[2]{}
 \@writefile{toc}{\contentsline {section}{\numberline {1}Implementation Status}{1}{section.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {2}Route Generation and Cost Calculation}{1}{section.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {3}Within-Wires Parallelism}{2}{section.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Preliminary Within-Wires Tuning}{2}{subsection.3.1}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Corrected preliminary within-wires static/dynamic comparison on GHC with $P=0$. All runs passed validation.}}{3}{table.1}\protected@file@percent }
-\newlabel{tab:ww-schedule-corrected-prelim}{{1}{3}{Corrected preliminary within-wires static/dynamic comparison on GHC with $P=0$. All runs passed validation}{table.1}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {4}Planned Across-Wires Parallelism}{3}{section.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {5}Optimization Hypotheses}{3}{section.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {6}Experimental Plan}{4}{section.6}\protected@file@percent }
-\gdef \@abspage@last{4}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Sequential Baseline Optimization}{2}{section.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Exploratory baseline progression, with times shown to three significant figures. The 5.89 s and 2.68 s values were reported approximately. The 3.17 s value is a representative run, with a reported median of approximately 3.15 s.}}{2}{table.1}\protected@file@percent }
+\newlabel{tab:baseline-progress}{{1}{2}{Exploratory baseline progression, with times shown to three significant figures. The 5.89 s and 2.68 s values were reported approximately. The 3.17 s value is a representative run, with a reported median of approximately 3.15 s}{table.1}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Within-Wires Parallelism}{3}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Tuning Methodology and Decisions}{4}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Fine granularity.}{4}{section*.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Medium-input tuning on GHC at eight threads. Schedule sweep: chunk 8, multiplier 4. Chunk sweep: static, multiplier 4. Threshold sweep: static, chunk 1. All supplied outputs passed validation. $^{*}$The multiplier-8 time is a supplied correction to the earlier recorded value, not a median recomputed from raw runs.}}{5}{table.2}\protected@file@percent }
+\newlabel{tab:ww-tuning}{{2}{5}{Medium-input tuning on GHC at eight threads. Schedule sweep: chunk 8, multiplier 4. Chunk sweep: static, multiplier 4. Threshold sweep: static, chunk 1. All supplied outputs passed validation. $^{*}$The multiplier-8 time is a supplied correction to the earlier recorded value, not a median recomputed from raw runs}{table.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Synchronization and Shared Memory}{6}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Scaling Limits}{6}{subsection.4.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Initial medium-input scalability medians on GHC with $P=0.1$, five iterations, and batch size one. Speedups use this implementation's one-thread baseline; efficiency uses computation speedup. Total time is initialization plus computation. All outputs passed validation.}}{7}{table.3}\protected@file@percent }
+\newlabel{tab:ww-initial-scaling}{{3}{7}{Initial medium-input scalability medians on GHC with $P=0.1$, five iterations, and batch size one. Speedups use this implementation's one-thread baseline; efficiency uses computation speedup. Total time is initialization plus computation. All outputs passed validation}{table.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Across-Wires Parallelism}{7}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Isolating the Initial Scoring Overhead}{8}{subsection.5.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Scoring-only diagnostic on identical initial few-input candidates. The first three variants isolate the original overhead; the last row is a separate three-run check after the change. All cost checksums matched. These timings are not assignment benchmark times.}}{8}{table.4}\protected@file@percent }
+\newlabel{tab:across-scoring-isolation}{{4}{8}{Scoring-only diagnostic on identical initial few-input candidates. The first three variants isolate the original overhead; the last row is a separate three-run check after the change. All cost checksums matched. These timings are not assignment benchmark times}{table.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Moving Geometric Checks Out of the Cell Loop}{8}{subsection.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Optimization Hypotheses}{9}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7}Tentative GHC Within-Wires Results}{10}{section.7}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Tentative GHC within-wires results for \texttt  {few\_wires.txt}, 128 wires. All supplied outputs passed validation.}}{10}{table.5}\protected@file@percent }
+\newlabel{tab:ghc-ww-few}{{5}{10}{Tentative GHC within-wires results for \texttt {few\_wires.txt}, 128 wires. All supplied outputs passed validation}{table.5}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Tentative GHC within-wires results for \texttt  {medium\_wires.txt}, 2048 wires. All supplied outputs passed validation.}}{10}{table.6}\protected@file@percent }
+\newlabel{tab:ghc-ww-medium}{{6}{10}{Tentative GHC within-wires results for \texttt {medium\_wires.txt}, 2048 wires. All supplied outputs passed validation}{table.6}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces Tentative GHC within-wires results for \texttt  {abundant\_wires.txt}, 16384 wires. All supplied outputs passed validation. $^{*}$The first run's thread-count line was omitted; one thread is inferred from the supplied order and needs confirmation.}}{11}{table.7}\protected@file@percent }
+\newlabel{tab:ghc-ww-abundant}{{7}{11}{Tentative GHC within-wires results for \texttt {abundant\_wires.txt}, 16384 wires. All supplied outputs passed validation. $^{*}$The first run's thread-count line was omitted; one thread is inferred from the supplied order and needs confirmation}{table.7}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {8}Final Implementation Decisions and PSC Evaluation}{11}{section.8}\protected@file@percent }
+\newlabel{sec:final-decisions}{{8}{11}{Final Implementation Decisions and PSC Evaluation}{section.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.1}Final decisions, rationale, and synchronization}{11}{subsection.8.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Exhaustive route set and direct construction.}{11}{section*.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Two occupancy views for spatial locality.}{12}{section*.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{W-mode parallel candidate search.}{12}{section*.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{A-mode batch selection and atomic commit.}{13}{section*.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{A-mode old-route overlap metadata.}{13}{section*.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Rejected single-thread A fast path.}{14}{section*.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.2}PSC methodology}{14}{subsection.8.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.3}PSC median computation times}{14}{subsection.8.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces PSC Bridges-2 RM median computation times (s), three trials per configuration. Every run passed validation.}}{15}{table.8}\protected@file@percent }
+\newlabel{tab:psc-compute}{{8}{15}{PSC Bridges-2 RM median computation times (s), three trials per configuration. Every run passed validation}{table.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.4}PSC computation and total speedup}{15}{subsection.8.4}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces PSC computation speedup. Each column uses its own one-thread median as the baseline.}}{15}{table.9}\protected@file@percent }
+\newlabel{tab:psc-compute-speedup}{{9}{15}{PSC computation speedup. Each column uses its own one-thread median as the baseline}{table.9}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces PSC total speedup. Initialization is serial and becomes visible once computation is very short, especially for the few-input cases.}}{15}{table.10}\protected@file@percent }
+\newlabel{tab:psc-total-speedup}{{10}{15}{PSC total speedup. Initialization is serial and becomes visible once computation is very short, especially for the few-input cases}{table.10}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.5}Interpretation and comparison with the reference}{15}{subsection.8.5}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces PSC Bridges-2 RM speedup curves derived from the median-of-three summary data. The dashed line is ideal linear speedup. W-mode plateaus when a single wire's candidate search cannot keep all workers busy; A-mode retains a larger pool of concurrent wires on the medium and abundant inputs.}}{16}{figure.1}\protected@file@percent }
+\newlabel{fig:psc-speedups}{{1}{16}{PSC Bridges-2 RM speedup curves derived from the median-of-three summary data. The dashed line is ideal linear speedup. W-mode plateaus when a single wire's candidate search cannot keep all workers busy; A-mode retains a larger pool of concurrent wires on the medium and abundant inputs}{figure.1}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {11}{\ignorespaces PSC one-thread computation time (s): our medians versus the handout's good-performance reference.}}{17}{table.11}\protected@file@percent }
+\newlabel{tab:reference-one-thread}{{11}{17}{PSC one-thread computation time (s): our medians versus the handout's good-performance reference}{table.11}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {9}Remaining Report Work}{18}{section.9}\protected@file@percent }
+\gdef \@abspage@last{18}
