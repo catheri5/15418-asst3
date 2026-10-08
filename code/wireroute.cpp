@@ -107,6 +107,55 @@ static Wire make_wire_from_points(std::initializer_list<Point> points) {
   return wire;
 }
 
+// Indexed candidate generation already knows each route's shape.  These
+// builders avoid an initializer_list and the general duplicate-removal loop,
+// while preserving the exact keypoint form produced by make_wire_from_points.
+static Wire make_straight_route(Point start, Point end) {
+  Wire wire;
+  wire.pts[0] = start;
+  if (start.x == end.x && start.y == end.y) {
+    wire.num_pts = 1;
+  } else {
+    wire.pts[1] = end;
+    wire.num_pts = 2;
+  }
+  return wire;
+}
+
+// The first two points are distinct for every non-collinear indexed candidate.
+// The second bend can coincide with the end point, which is the only adjacent
+// duplicate that make_wire_from_points would remove for these routes.
+static Wire make_up_to_two_bend_route(
+    Point start, Point first_bend, Point second_bend, Point end) {
+  Wire wire;
+  wire.pts[0] = start;
+  wire.pts[1] = first_bend;
+  if (second_bend.x == end.x && second_bend.y == end.y) {
+    wire.pts[2] = end;
+    wire.num_pts = 3;
+  } else {
+    wire.pts[2] = second_bend;
+    wire.pts[3] = end;
+    wire.num_pts = 4;
+  }
+  return wire;
+}
+
+// Three-bend candidates use strictly interior bend coordinates, so all five
+// keypoints are distinct from their neighbors.
+static Wire make_three_bend_route(
+    Point start, Point first_bend, Point second_bend, Point third_bend,
+    Point end) {
+  Wire wire;
+  wire.pts[0] = start;
+  wire.pts[1] = first_bend;
+  wire.pts[2] = second_bend;
+  wire.pts[3] = third_bend;
+  wire.pts[4] = end;
+  wire.num_pts = 5;
+  return wire;
+}
+
 // Add or remove a wire using delta +1 or -1
 void add_wire_to_occupancy(const Wire &wire,
                            std::vector<std::vector<int>> &occupancy,
@@ -369,7 +418,7 @@ static long long count_routes(Point start, Point end) {
 // Construct one route in the original candidate order
 static Wire route_from_index(Point start, Point end, long long choice) {
   if (start.x == end.x || start.y == end.y) {
-    return make_wire_from_points({start, end});
+    return make_straight_route(start, end);
   }
 
   const int min_x = std::min(start.x, end.x);
@@ -380,13 +429,15 @@ static Wire route_from_index(Point start, Point end, long long choice) {
   // First dx choices are horizontal first
   if (choice < dx) {
     const int x = min_x + (start.x == min_x ? 1 : 0) + choice;
-    return make_wire_from_points({start, {x, start.y}, {x, end.y}, end});
+    return make_up_to_two_bend_route(
+        start, {x, start.y}, {x, end.y}, end);
   }
   choice -= dx;
   // Next dy choices are vertical first
   if (choice < dy) {
     const int y = min_y + (start.y == min_y ? 1 : 0) + choice;
-    return make_wire_from_points({start, {start.x, y}, {end.x, y}, end});
+    return make_up_to_two_bend_route(
+        start, {start.x, y}, {end.x, y}, end);
   }
   choice -= dy;
 
@@ -394,11 +445,11 @@ static Wire route_from_index(Point start, Point end, long long choice) {
   const int x = min_x + 1 + (choice / 2) / (dy - 1);
   const int y = min_y + 1 + (choice / 2) % (dy - 1);
   if (choice % 2 == 0) {
-    return make_wire_from_points(
-        {start, {x, start.y}, {x, y}, {end.x, y}, end});
+    return make_three_bend_route(
+        start, {x, start.y}, {x, y}, {end.x, y}, end);
   }
-  return make_wire_from_points(
-      {start, {start.x, y}, {x, y}, {x, end.y}, end});
+  return make_three_bend_route(
+      start, {start.x, y}, {x, y}, {x, end.y}, end);
 }
 
 // Construct one uniformly chosen route
@@ -408,55 +459,66 @@ static Wire choose_random_route(Point start, Point end, std::mt19937 &rng) {
   return route_from_index(start, end, random_route_dist(rng));
 }
 
-// Check whether a cell contains the current wire's contribution
-static bool cell_on_wire(const Wire &wire, int x, int y) {
-  for (int i = 1; i < wire.num_pts; i++) {
-    const Point start = wire.pts[i - 1];
-    const Point end = wire.pts[i];
-    if (start.y == end.y) {
-      if (y == start.y && x >= std::min(start.x, end.x) &&
-          x <= std::max(start.x, end.x)) {
-        return true;
-      }
-    } else if (x == start.x && y >= std::min(start.y, end.y) &&
-               y <= std::max(start.y, end.y)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 struct OverlapRange {
   int first;
   int limit;
 };
 
-// Find and merge old-wire overlap ranges for one candidate segment
-static int find_segment_overlaps(
-    const Wire &current, bool horizontal, int fixed, int first, int limit,
-    OverlapRange *overlaps) {
-  int count = 0;
-  for (int i = 1; i < current.num_pts; i++) {
-    const Point start = current.pts[i - 1];
-    const Point end = current.pts[i];
+struct WireSegment {
+  bool horizontal;
+  int fixed;
+  int first;
+  int limit;
+};
+
+// Normalize the old route once per wire search.  A-mode scores many
+// candidates against the same current route, so avoid re-deriving the old
+// route's segment orientation and endpoints for every candidate segment.
+struct CurrentWireGeometry {
+  WireSegment segments[MAX_PTS_PER_WIRE - 1];
+  int count;
+};
+
+static CurrentWireGeometry make_current_wire_geometry(const Wire &wire) {
+  CurrentWireGeometry geometry;
+  geometry.count = wire.num_pts - 1;
+  for (int i = 1; i < wire.num_pts; i++) {
+    const Point start = wire.pts[i - 1];
+    const Point end = wire.pts[i];
+    const bool horizontal = start.y == end.y;
     const int start_pos = horizontal ? start.x : start.y;
     const int end_pos = horizontal ? end.x : end.y;
-    const int start_fixed = horizontal ? start.y : start.x;
-    const int end_fixed = horizontal ? end.y : end.x;
+    geometry.segments[i - 1] = {
+        horizontal,
+        horizontal ? start.y : start.x,
+        std::min(start_pos, end_pos),
+        std::max(start_pos, end_pos) + 1,
+    };
+  }
+  return geometry;
+}
+
+// Find and merge old-wire overlap ranges for one candidate segment
+static int find_segment_overlaps(
+    const CurrentWireGeometry &current, bool horizontal, int fixed, int first,
+    int limit,
+    OverlapRange *overlaps) {
+  int count = 0;
+  for (int i = 0; i < current.count; i++) {
+    const WireSegment old_segment = current.segments[i];
     int overlap_first, overlap_limit;
 
-    if (start_fixed == end_fixed) {
-      if (fixed != start_fixed) continue;
-      overlap_first = std::min(start_pos, end_pos);
-      overlap_limit = std::max(start_pos, end_pos) + 1;
+    if (horizontal == old_segment.horizontal) {
+      if (fixed != old_segment.fixed) continue;
+      overlap_first = old_segment.first;
+      overlap_limit = old_segment.limit;
     } else {
       // A perpendicular crossing occupies one cell on this segment
-      if (fixed < std::min(start_fixed, end_fixed) ||
-          fixed > std::max(start_fixed, end_fixed)) {
+      if (fixed < old_segment.first || fixed >= old_segment.limit) {
         continue;
       }
-      overlap_first = start_pos;
-      overlap_limit = start_pos + 1;
+      overlap_first = old_segment.fixed;
+      overlap_limit = old_segment.fixed + 1;
     }
 
     overlap_first = std::max(first, overlap_first);
@@ -491,7 +553,7 @@ static int find_segment_overlaps(
 
 // Fully score without changing occupancy until the batch commits
 static long long calculate_wire_cost_across(
-    const Wire &candidate, const Wire &current,
+    const Wire &candidate, const CurrentWireGeometry &current,
     const std::vector<std::vector<int>> &occupancy,
     const std::vector<std::vector<int>> &occupancy_columns) {
   long long cost = 0;
@@ -541,13 +603,15 @@ static long long calculate_wire_cost_across(
     }
   }
 
-  // Include the final endpoint once
+  // Candidate and current route have identical endpoints, so their final
+  // endpoint is always on the old route.  Include it once without another
+  // per-candidate old-route membership search.
   if (candidate.num_pts > 1) {
     const Point end = candidate.pts[candidate.num_pts - 1];
     int value;
     #pragma omp atomic read
     value = occupancy[end.y][end.x];
-    const long long occ = value + 1LL - cell_on_wire(current, end.x, end.y);
+    const long long occ = value;
     cost += occ * occ;
   }
   return cost;
@@ -555,7 +619,7 @@ static long long calculate_wire_cost_across(
 
 // Fully score one A-mode candidate and keep the existing best on ties
 static void try_candidate_route_across(
-    const Wire &candidate, const Wire &current,
+    const Wire &candidate, const CurrentWireGeometry &current,
     const std::vector<std::vector<int>> &occupancy,
     const std::vector<std::vector<int>> &occupancy_columns,
     Wire &best, long long &best_cost) {
@@ -569,14 +633,14 @@ static void try_candidate_route_across(
 
 // Generate A-mode candidates directly in the original route order
 static void try_routes_across(
-    const Wire &current,
+    const Wire &current, const CurrentWireGeometry &current_geometry,
     const std::vector<std::vector<int>> &occupancy,
     const std::vector<std::vector<int>> &occupancy_columns,
     Wire &best, long long &best_cost) {
   const Point start = current.pts[0];
   const Point end = current.pts[current.num_pts - 1];
   if (start.x == end.x || start.y == end.y) {
-    try_candidate_route_across(make_wire_from_points({start, end}), current,
+    try_candidate_route_across(make_straight_route(start, end), current_geometry,
                                occupancy, occupancy_columns, best, best_cost);
     return;
   }
@@ -590,28 +654,28 @@ static void try_routes_across(
   for (int x = min_x; x <= max_x; x++) {
     if (x == start.x) continue;
     try_candidate_route_across(
-        make_wire_from_points({start, {x, start.y}, {x, end.y}, end}), current,
-        occupancy, occupancy_columns, best, best_cost);
+        make_up_to_two_bend_route(start, {x, start.y}, {x, end.y}, end),
+        current_geometry, occupancy, occupancy_columns, best, best_cost);
   }
 
   // Vertical-first routes with at most two bends
   for (int y = min_y; y <= max_y; y++) {
     if (y == start.y) continue;
     try_candidate_route_across(
-        make_wire_from_points({start, {start.x, y}, {end.x, y}, end}), current,
-        occupancy, occupancy_columns, best, best_cost);
+        make_up_to_two_bend_route(start, {start.x, y}, {end.x, y}, end),
+        current_geometry, occupancy, occupancy_columns, best, best_cost);
   }
 
   // Both three-bend orientations for each interior point
   for (int x = min_x + 1; x < max_x; x++) {
     for (int y = min_y + 1; y < max_y; y++) {
       try_candidate_route_across(
-          make_wire_from_points(
-              {start, {x, start.y}, {x, y}, {end.x, y}, end}), current,
+          make_three_bend_route(
+              start, {x, start.y}, {x, y}, {end.x, y}, end), current_geometry,
           occupancy, occupancy_columns, best, best_cost);
       try_candidate_route_across(
-          make_wire_from_points(
-              {start, {start.x, y}, {x, y}, {x, end.y}, end}), current,
+          make_three_bend_route(
+              start, {start.x, y}, {x, y}, {x, end.y}, end), current_geometry,
           occupancy, occupancy_columns, best, best_cost);
     }
   }
@@ -721,10 +785,15 @@ static void route_within_wires(
         long long best_cost = calculate_wire_cost_baseline(
             curr, occupancy, occupancy_columns);
 
-        // check if above parallel threshold
+        // A one-thread OpenMP region cannot distribute candidate work and would
+        // be entered once per eligible wire. Keep that case on the ordinary
+        // sequential path; otherwise use the threshold to amortize parallel
+        // team and scheduling overhead.
         const long long threshold =
             1LL * W_WIRE_PARALLEL_THRESHOLD_MULTIPLIER * params.num_threads;
-        if (num_routes >= threshold) { // execute in parallel
+        const bool use_parallel_candidate_search =
+            params.num_threads > 1 && num_routes >= threshold;
+        if (use_parallel_candidate_search) {
 
           // Reset costs so unused thread slots cannot retain old results
           std::fill(thread_best_cost.begin(), thread_best_cost.end(), best_cost);
@@ -828,9 +897,12 @@ static void route_across_wires(
           if (thread_route_choice_dist(thread_rng) < params.SA_prob) {
             best = choose_random_route(start, end, thread_rng);
           } else {
+            const CurrentWireGeometry current_geometry =
+                make_current_wire_geometry(curr);
             long long best_cost = calculate_wire_cost_across(
-                curr, curr, occupancy, occupancy_columns);
-            try_routes_across(curr, occupancy, occupancy_columns,
+                curr, current_geometry, occupancy, occupancy_columns);
+            try_routes_across(curr, current_geometry,
+                              occupancy, occupancy_columns,
                               best, best_cost);
           }
           // Remember only changed routes, without updating occupancy yet
