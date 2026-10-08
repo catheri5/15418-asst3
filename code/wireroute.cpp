@@ -514,14 +514,15 @@ struct RoutingParams {
   int batch_size;
 };
 
-// Initialize legal starting routes and build both occupancy views
+// Assign the initial legal route for every wire and build occupancy. The
+// optional column view is maintained only by the across-wires implementation.
 static void initialize_routes(
     std::vector<Wire> &wires,
     std::vector<std::vector<int>> &occupancy,
-    std::vector<std::vector<int>> &occupancy_columns) {
+    std::vector<std::vector<int>> *occupancy_columns) {
   for (auto &wire : wires) {
-    Point start = wire.pts[0];
-    Point end = wire.pts[1];
+    const Point start = wire.pts[0];
+    const Point end = wire.pts[1];
 
     if (start.x == end.x || start.y == end.y) {
       wire.num_pts = 2;
@@ -788,7 +789,8 @@ int main(int argc, char *argv[]) {
   // Column view for contiguous vertical scoring in both modes
   std::vector<std::vector<int>> occupancy_columns(dim_x, std::vector<int>(dim_y));
 
-  const RoutingParams params{num_threads, SA_prob, SA_iters, batch_size};
+  const RoutingParams routing_params{
+      num_threads, SA_prob, SA_iters, batch_size};
 
   // Student code end
   const double init_time =
