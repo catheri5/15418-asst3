@@ -273,7 +273,9 @@ Final graphs, cache-miss data, and PSC results remain pending.
 - Workers take batches; each batch contains up to `-b` wires
 - Choose every route in the batch before committing any of that batch's updates
   No nested within-wire parallel search
-- `cell_on_wire()` checks whether a candidate cell also lies on the old route
+- `find_segment_overlaps()` computes old-route overlap intervals before each
+  candidate segment's cell loop; merged ranges prevent double subtraction at bends
+- `cell_on_wire()` remains only for the candidate's final endpoint
 - `calculate_wire_cost_across()` fully scores candidates using
   `(occupancy_value - cell_on_old_route + 1)^2`
   This factors out only the current wire without physically removing it early
@@ -289,12 +291,56 @@ Final graphs, cache-miss data, and PSC results remain pending.
 - One-thread, batch-1 comparisons preserved the earlier baseline outputs
   Batch decisions were checked against an independent reference, including
   exhaustive/random selection and partial batches
-- Atomic helper stress checks passed; full OpenMP scheduling/performance
-  measurements on GHC are still pending
+- Cost-reference and atomic helper stress checks passed; full OpenMP validation
+  on GHC is still pending. The initial one-thread A slowdown was reported below
+
+### Initial A Slowdown and Scoring Isolation
+
+- Reported few-input, one-thread A computation was about 15 s, versus W's 2.82 s
+  This is an exploratory observation, not a controlled timing median
+- One thread rules out cross-worker contention and load imbalance as explanations
+  Per-cell work and atomic/compiler overhead remained candidates
+- The first A scorer called `cell_on_wire()` for every candidate cell, scanning
+  up to four old segments each time
+- Function extraction was organizational, not an algorithmic fix for that work
+- A temporary local scoring-only diagnostic evaluated 2,977,130 candidates from
+  the initial few-input routes, comparing equivalent effective occupancy
+  All three variants returned matching cost checksums
+
+| Diagnostic scorer | Local median (s), 3 runs |
+| --- | ---: |
+| W-style scoring | 0.159433 |
+| W-style scoring with atomic reads | 0.467186 |
+| Initial A, atomic reads plus per-cell membership | 1.625910 |
+| Updated A, atomic reads plus segment overlap ranges | 0.428291 |
+
+This optimized local Clang diagnostic did not run an OpenMP worker team and
+excluded rerouting, random choices, commits, and scheduling. It is not a GHC
+performance table. The last row comes from a separate three-run post-change
+check; do not extrapolate its roughly 3.80x scoring improvement to full-program time.
+Atomic-read overhead can include lost compiler optimization opportunities, not
+necessarily an expensive locked hardware read.
+
+### Segment-Overlap Change
+
+- For each candidate segment, scan old segments once to find collinear overlaps
+  and perpendicular single-cell crossings
+- Clip to half-open traversal bounds, sort, and merge overlapping/adjacent ranges
+- Score outside ranges using `(value + 1)^2`; inside use `value^2` because the
+  old wire's -1 and candidate's +1 cancel
+- Use a fixed-size stack array for at most four overlap ranges; no allocation
+- Every cell is still atomically read and fully evaluated, including the endpoint
+- No cached costs, prefix sums, or early cutoff; geometry only
+- W logic, A batching, atomics, scheduling, and RNG behavior are unchanged
+- 94,150 independent cost comparisons and 1,600 concurrent commits passed
+- 78 serial before/after output comparisons matched, including random selection
+  and partial/oversized batches
+- Next: rebuild on GHC and rerun few-input A at one thread with `B=1`
+  Check validation and collect medians before adding a measured GHC improvement
 
 ### Across-Wires Knobs
 
-The chunk-size constant is in main's student-writable initialization area, beside W's knobs:
+The chunk-size constant is at the top of `route_across_wires()`:
 
 ```cpp
 const int A_WIRE_CHUNK_SIZE = 1;
@@ -307,6 +353,8 @@ const int A_WIRE_CHUNK_SIZE = 1;
   granularity and therefore may affect final routing quality
 - The A loop uses `schedule(dynamic, A_WIRE_CHUNK_SIZE)`
   The earlier runtime-schedule setting was removed to match the W-style pragma
+- W's tuning constants similarly live in `route_within_wires()`
+  `RoutingParams` contains only command-line inputs
 - No A threshold multiplier yet; the W route-count threshold is not an A knob
 - A results can vary with work assignment, thread-specific RNG streams, and
   concurrent occupancy updates, not only equal-cost tie-breaking

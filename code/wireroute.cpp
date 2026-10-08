@@ -426,6 +426,69 @@ static bool cell_on_wire(const Wire &wire, int x, int y) {
   return false;
 }
 
+struct OverlapRange {
+  int first;
+  int limit;
+};
+
+// Find and merge old-wire overlap ranges for one candidate segment
+static int find_segment_overlaps(
+    const Wire &current, bool horizontal, int fixed, int first, int limit,
+    OverlapRange *overlaps) {
+  int count = 0;
+  for (int i = 1; i < current.num_pts; i++) {
+    const Point start = current.pts[i - 1];
+    const Point end = current.pts[i];
+    const int start_pos = horizontal ? start.x : start.y;
+    const int end_pos = horizontal ? end.x : end.y;
+    const int start_fixed = horizontal ? start.y : start.x;
+    const int end_fixed = horizontal ? end.y : end.x;
+    int overlap_first, overlap_limit;
+
+    if (start_fixed == end_fixed) {
+      if (fixed != start_fixed) continue;
+      overlap_first = std::min(start_pos, end_pos);
+      overlap_limit = std::max(start_pos, end_pos) + 1;
+    } else {
+      // A perpendicular crossing occupies one cell on this segment
+      if (fixed < std::min(start_fixed, end_fixed) ||
+          fixed > std::max(start_fixed, end_fixed)) {
+        continue;
+      }
+      overlap_first = start_pos;
+      overlap_limit = start_pos + 1;
+    }
+
+    overlap_first = std::max(first, overlap_first);
+    overlap_limit = std::min(limit, overlap_limit);
+    if (overlap_first < overlap_limit) {
+      overlaps[count++] = {overlap_first, overlap_limit};
+    }
+  }
+
+  // Insertion sort for at most four overlap ranges
+  for (int i = 1; i < count; i++) {
+    const OverlapRange range = overlaps[i];
+    int j = i;
+    while (j > 0 && overlaps[j - 1].first > range.first) {
+      overlaps[j] = overlaps[j - 1];
+      j--;
+    }
+    overlaps[j] = range;
+  }
+  int merged = 0;
+  for (int i = 0; i < count; i++) {
+    // Shared bends and adjacent ranges must subtract the old wire only once
+    if (merged > 0 && overlaps[i].first <= overlaps[merged - 1].limit) {
+      overlaps[merged - 1].limit =
+          std::max(overlaps[merged - 1].limit, overlaps[i].limit);
+    } else {
+      overlaps[merged++] = overlaps[i];
+    }
+  }
+  return merged;
+}
+
 // Fully score without changing occupancy until the batch commits
 static long long calculate_wire_cost_across(
     const Wire &candidate, const Wire &current,
@@ -436,30 +499,45 @@ static long long calculate_wire_cost_across(
   for (int i = 1; i < candidate.num_pts; i++) {
     const Point start = candidate.pts[i - 1];
     const Point end = candidate.pts[i];
-    if (start.y == end.y) {
-      const auto &row = occupancy[start.y];
-      const int offset = start.x > end.x ? 1 : 0;
-      const int first = std::min(start.x, end.x) + offset;
-      const int limit = std::max(start.x, end.x) + offset;
-      for (int x = first; x < limit; x++) {
+    const bool horizontal = start.y == end.y;
+    const int start_pos = horizontal ? start.x : start.y;
+    const int end_pos = horizontal ? end.x : end.y;
+    const int fixed = horizontal ? start.y : start.x;
+    const auto &line = horizontal ? occupancy[fixed] : occupancy_columns[fixed];
+    const int offset = start_pos > end_pos ? 1 : 0;
+    const int first = std::min(start_pos, end_pos) + offset;
+    const int limit = std::max(start_pos, end_pos) + offset;
+
+    OverlapRange overlaps[MAX_PTS_PER_WIRE - 1];
+    const int count = find_segment_overlaps(
+        current, horizontal, fixed, first, limit, overlaps);
+    int pos = first;
+    for (int r = 0; r < count; r++) {
+      // Outside the old route, adding the candidate contributes +1
+      for (; pos < overlaps[r].first; pos++) {
         int value;
         #pragma omp atomic read
-        value = row[x];
-        const long long occ = value + 1LL - cell_on_wire(current, x, start.y);
+        value = line[pos];
+        const long long occ = value + 1LL;
         cost += occ * occ;
       }
-    } else {
-      const auto &column = occupancy_columns[start.x];
-      const int offset = start.y > end.y ? 1 : 0;
-      const int first = std::min(start.y, end.y) + offset;
-      const int limit = std::max(start.y, end.y) + offset;
-      for (int y = first; y < limit; y++) {
+
+      // On the old route, its -1 and the candidate's +1 cancel
+      for (; pos < overlaps[r].limit; pos++) {
         int value;
         #pragma omp atomic read
-        value = column[y];
-        const long long occ = value + 1LL - cell_on_wire(current, start.x, y);
+        value = line[pos];
+        const long long occ = value;
         cost += occ * occ;
       }
+    }
+
+    for (; pos < limit; pos++) {
+      int value;
+      #pragma omp atomic read
+      value = line[pos];
+      const long long occ = value + 1LL;
+      cost += occ * occ;
     }
   }
 
@@ -514,12 +592,11 @@ struct RoutingParams {
   int batch_size;
 };
 
-// Assign the initial legal route for every wire and build occupancy. The
-// optional column view is maintained only by the across-wires implementation.
+// Initialize legal starting routes and build both occupancy views
 static void initialize_routes(
     std::vector<Wire> &wires,
     std::vector<std::vector<int>> &occupancy,
-    std::vector<std::vector<int>> *occupancy_columns) {
+    std::vector<std::vector<int>> &occupancy_columns) {
   for (auto &wire : wires) {
     const Point start = wire.pts[0];
     const Point end = wire.pts[1];
@@ -812,9 +889,9 @@ int main(int argc, char *argv[]) {
   initialize_routes(wires, occupancy, occupancy_columns);
 
   if (parallel_mode == 'W') {
-    route_within_wires(wires, occupancy, occupancy_columns, params);
+    route_within_wires(wires, occupancy, occupancy_columns, routing_params);
   } else {
-    route_across_wires(wires, occupancy, occupancy_columns, params);
+    route_across_wires(wires, occupancy, occupancy_columns, routing_params);
   }
 
   // Student code end

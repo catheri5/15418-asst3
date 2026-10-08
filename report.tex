@@ -27,7 +27,7 @@ endpoints share a row or column, the initial route is straight.  Otherwise, the
 initial route is a horizontal-first one-bend path.  The occupancy matrix is then
 constructed by adding each initial wire route.
 
-The current baseline rerouting algorithm visits every wire for each iteration.
+The sequential correctness baseline visits every wire for each iteration.
 For a wire being reconsidered, the current route is first removed from the
 occupancy matrix.  With fixed probability $P$, the program chooses a legal route
 uniformly at random.  Otherwise, it evaluates every legal route with at most
@@ -109,8 +109,9 @@ locality during the many candidate-scoring reads.
 The transposed view is not a prefix-sum table or a cache of route costs.
 Every candidate is still evaluated completely, without cost reuse or early
 termination, and bends and the final endpoint are counted exactly once.
-The optimized traversal is now used by both modes. A mode generates candidates
-directly in sequential loops; W mode uses indexed generation as described below.
+The optimized traversal is now used by both modes. Both use indexed generation:
+A generates candidates sequentially within a batch, while W distributes
+candidate generation and scoring across threads as described below.
 
 \FloatBarrier
 \section{Within-Wires Parallelism}
@@ -299,19 +300,95 @@ memory-system pressure may flatten or reverse scaling, but this remains a
 hypothesis to test in the PSC experiments.
 
 \FloatBarrier
-\section{Planned Across-Wires Parallelism}
+\section{Across-Wires Parallelism}
 
-The across-wires strategy is more complicated because different threads make
-route decisions that update the shared occupancy matrix.  Our initial plan is to
-follow the assignment's batch model: a worker obtains a batch of wires, processes
-the wires in that batch sequentially, and then updates the occupancy matrix for
-the chosen routes.  We will vary the batch size to study the tradeoff between
-synchronization overhead, staleness, load balance, and final routing quality.
+Our initial A-mode baseline assigns batches of wires to workers using dynamic
+scheduling. Each worker explores its batch's wires sequentially, remembers all
+chosen routes, and only then commits the batch's removals and insertions.
+One parallel region spans all iterations, with a barrier between iterations.
+Workers have private random generators and reusable batch-route storage.
 
-Potential synchronization strategies include a single global lock, row-level
-locks, and tile-level locks.  We expect the simplest correct version to use
-coarser synchronization first, then refine the locking granularity only if
-measurements show that update contention is a bottleneck.
+Unlike W mode, A cannot remove a wire before its batch finishes selecting
+routes. The initial scorer therefore read each cell atomically and subtracted
+one when \texttt{cell\_on\_wire()} found that cell on the current route:
+$(value-onOldRoute+1)^2$. That helper scanned up to four old segments for
+every cell of every candidate. Atomic increment/decrement updates protect both
+occupancy views; atomic reads permit concurrent scoring without a C++ data race.
+They do not provide a consistent whole-route snapshot, which the assignment
+does not require.
+
+\subsection{Isolating the Initial Scoring Overhead}
+
+The first reported one-thread few-input A computation time was approximately
+15 seconds, compared with W's 2.82 seconds on the same input. This was an
+exploratory symptom rather than a controlled median-of-three benchmark.
+Because the discrepancy occurred at one thread, cross-worker update contention
+and work imbalance could not explain it. Extracting the mode implementations
+into separate functions improved organization but did not remove the per-cell
+membership checks; we therefore investigated the scoring loop before tuning
+scheduling or batch size.
+
+We used a temporary local scoring-only test over the 2,977,130 candidates from
+the initial few-input wire configuration. It compared W-style scoring,
+the same scorer with atomic reads, and A's atomic reads plus membership checks.
+All variants used equivalent effective occupancy and produced matching cost
+checksums. Each candidate was scored fully. The test used optimized local
+Clang compilation and medians of three runs, without an OpenMP worker team.
+It excluded rerouting iterations, random choices, commit time, and
+parallel scheduling, so these are not GHC full-program performance results.
+
+\begin{table}[!htbp]
+\centering
+\small
+\begin{tabular}{@{}l r@{}}
+\toprule
+Scoring variant & Local median (s) \\
+\midrule
+W-style scoring & 0.159 \\
+W-style scoring with atomic reads & 0.467 \\
+Initial A: atomic reads and per-cell membership checks & 1.63 \\
+Updated A: atomic reads and segment overlap ranges & 0.428 \\
+\bottomrule
+\end{tabular}
+\caption{Scoring-only diagnostic on identical initial few-input candidates.
+The first three variants isolate the original overhead; the last row is a
+separate three-run check after the change. All cost checksums matched.
+These timings are not assignment benchmark times.}
+\label{tab:across-scoring-isolation}
+\end{table}
+
+Table~\ref{tab:across-scoring-isolation} showed overhead both from the
+atomic-read variant and from adding per-cell geometric checks.
+The atomic comparison includes compiler optimization effects, not just the
+cost of a hardware atomic instruction. The test supported targeting the
+inner-loop work, without establishing how much of the reported GHC time
+each factor contributed.
+
+\subsection{Moving Geometric Checks Out of the Cell Loop}
+
+We now determine overlaps between each candidate segment and the old wire
+before visiting that segment's cells. Parallel segments yield overlap intervals;
+perpendicular crossings yield single-cell intervals. These ranges are clipped
+to the candidate's half-open traversal bounds, sorted, and merged so shared
+bends are not subtracted twice.
+
+The scorer then walks non-overlapping spans using $(value+1)^2$ and overlapping
+spans using $value^2$, where removing the old wire and adding the candidate
+cancel. This replaces a segment scan at every cell with a small fixed-size
+range calculation per segment. Every cell is still read atomically and
+evaluated once, and the final endpoint is included separately.
+Only geometric overlap metadata is computed: there are no cached costs,
+prefix sums, skipped candidates, or early termination.
+
+The updated scorer's local median was 0.428 seconds versus 1.63 seconds
+for the initial A scorer, approximately a $3.80\times$ scoring-only improvement
+across the two measurement sets. This is encouraging but not a prediction of
+the full-program speedup. Cost-reference tests, before/after output comparisons,
+and atomic-update stress checks passed; a matching GHC before/after benchmark
+and full OpenMP validation remain to be collected. Batch selection/update timing,
+random selection, scheduling, and W mode are unchanged.
+
+\FloatBarrier
 
 \section{Optimization Hypotheses}
 
