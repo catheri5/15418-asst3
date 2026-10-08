@@ -551,7 +551,22 @@ static int find_segment_overlaps(
   return merged;
 }
 
+// A single A-mode worker never races an occupancy writer, so its reads can
+// remain ordinary loads.  The multi-worker version keeps the atomic reads
+// required while batches are committed concurrently.
+template <bool AtomicRead>
+static inline int read_occupancy_across(const int &cell) {
+  if constexpr (AtomicRead) {
+    int value;
+    #pragma omp atomic read
+    value = cell;
+    return value;
+  }
+  return cell;
+}
+
 // Fully score without changing occupancy until the batch commits
+template <bool AtomicRead>
 static long long calculate_wire_cost_across(
     const Wire &candidate, const CurrentWireGeometry &current,
     const std::vector<std::vector<int>> &occupancy,
@@ -577,27 +592,21 @@ static long long calculate_wire_cost_across(
     for (int r = 0; r < count; r++) {
       // Outside the old route, adding the candidate contributes +1
       for (; pos < overlaps[r].first; pos++) {
-        int value;
-        #pragma omp atomic read
-        value = line[pos];
+        const int value = read_occupancy_across<AtomicRead>(line[pos]);
         const long long occ = value + 1LL;
         cost += occ * occ;
       }
 
       // On the old route, its -1 and the candidate's +1 cancel
       for (; pos < overlaps[r].limit; pos++) {
-        int value;
-        #pragma omp atomic read
-        value = line[pos];
+        const int value = read_occupancy_across<AtomicRead>(line[pos]);
         const long long occ = value;
         cost += occ * occ;
       }
     }
 
     for (; pos < limit; pos++) {
-      int value;
-      #pragma omp atomic read
-      value = line[pos];
+      const int value = read_occupancy_across<AtomicRead>(line[pos]);
       const long long occ = value + 1LL;
       cost += occ * occ;
     }
@@ -608,9 +617,8 @@ static long long calculate_wire_cost_across(
   // per-candidate old-route membership search.
   if (candidate.num_pts > 1) {
     const Point end = candidate.pts[candidate.num_pts - 1];
-    int value;
-    #pragma omp atomic read
-    value = occupancy[end.y][end.x];
+    const int value =
+        read_occupancy_across<AtomicRead>(occupancy[end.y][end.x]);
     const long long occ = value;
     cost += occ * occ;
   }
@@ -618,12 +626,13 @@ static long long calculate_wire_cost_across(
 }
 
 // Fully score one A-mode candidate and keep the existing best on ties
+template <bool AtomicRead>
 static void try_candidate_route_across(
     const Wire &candidate, const CurrentWireGeometry &current,
     const std::vector<std::vector<int>> &occupancy,
     const std::vector<std::vector<int>> &occupancy_columns,
     Wire &best, long long &best_cost) {
-  const long long cost = calculate_wire_cost_across(
+  const long long cost = calculate_wire_cost_across<AtomicRead>(
       candidate, current, occupancy, occupancy_columns);
   if (cost < best_cost) {
     best_cost = cost;
@@ -632,6 +641,7 @@ static void try_candidate_route_across(
 }
 
 // Generate A-mode candidates directly in the original route order
+template <bool AtomicRead>
 static void try_routes_across(
     const Wire &current, const CurrentWireGeometry &current_geometry,
     const std::vector<std::vector<int>> &occupancy,
@@ -640,8 +650,9 @@ static void try_routes_across(
   const Point start = current.pts[0];
   const Point end = current.pts[current.num_pts - 1];
   if (start.x == end.x || start.y == end.y) {
-    try_candidate_route_across(make_straight_route(start, end), current_geometry,
-                               occupancy, occupancy_columns, best, best_cost);
+    try_candidate_route_across<AtomicRead>(
+        make_straight_route(start, end), current_geometry, occupancy,
+        occupancy_columns, best, best_cost);
     return;
   }
 
@@ -653,7 +664,7 @@ static void try_routes_across(
   // Horizontal-first routes with at most two bends
   for (int x = min_x; x <= max_x; x++) {
     if (x == start.x) continue;
-    try_candidate_route_across(
+    try_candidate_route_across<AtomicRead>(
         make_up_to_two_bend_route(start, {x, start.y}, {x, end.y}, end),
         current_geometry, occupancy, occupancy_columns, best, best_cost);
   }
@@ -661,7 +672,7 @@ static void try_routes_across(
   // Vertical-first routes with at most two bends
   for (int y = min_y; y <= max_y; y++) {
     if (y == start.y) continue;
-    try_candidate_route_across(
+    try_candidate_route_across<AtomicRead>(
         make_up_to_two_bend_route(start, {start.x, y}, {end.x, y}, end),
         current_geometry, occupancy, occupancy_columns, best, best_cost);
   }
@@ -669,11 +680,11 @@ static void try_routes_across(
   // Both three-bend orientations for each interior point
   for (int x = min_x + 1; x < max_x; x++) {
     for (int y = min_y + 1; y < max_y; y++) {
-      try_candidate_route_across(
+      try_candidate_route_across<AtomicRead>(
           make_three_bend_route(
               start, {x, start.y}, {x, y}, {end.x, y}, end), current_geometry,
           occupancy, occupancy_columns, best, best_cost);
-      try_candidate_route_across(
+      try_candidate_route_across<AtomicRead>(
           make_three_bend_route(
               start, {start.x, y}, {x, y}, {x, end.y}, end), current_geometry,
           occupancy, occupancy_columns, best, best_cost);
@@ -681,7 +692,10 @@ static void try_routes_across(
   }
 }
 
-// Protect overlapping updates in both occupancy views
+// Protect overlapping updates in both occupancy views.  At one thread, the
+// same updates are ordinary stores because no concurrent reader or writer
+// exists.
+template <bool AtomicUpdate>
 static void add_wire_to_occupancy_across(
     const Wire &wire,
     std::vector<std::vector<int>> &occupancy,
@@ -696,19 +710,29 @@ static void add_wire_to_occupancy_across(
     const int dy = (end_y > y) ? 1 : (end_y < y) ? -1 : 0;
 
     while (x != end_x || y != end_y) {
-      #pragma omp atomic update
-      occupancy[y][x] += delta;
-      #pragma omp atomic update
-      occupancy_columns[x][y] += delta;
+      if constexpr (AtomicUpdate) {
+        #pragma omp atomic update
+        occupancy[y][x] += delta;
+        #pragma omp atomic update
+        occupancy_columns[x][y] += delta;
+      } else {
+        occupancy[y][x] += delta;
+        occupancy_columns[x][y] += delta;
+      }
       x += dx;
       y += dy;
     }
 
     if (i == wire.num_pts - 1) {
-      #pragma omp atomic update
-      occupancy[y][x] += delta;
-      #pragma omp atomic update
-      occupancy_columns[x][y] += delta;
+      if constexpr (AtomicUpdate) {
+        #pragma omp atomic update
+        occupancy[y][x] += delta;
+        #pragma omp atomic update
+        occupancy_columns[x][y] += delta;
+      } else {
+        occupancy[y][x] += delta;
+        occupancy_columns[x][y] += delta;
+      }
     }
   }
 }
@@ -872,6 +896,56 @@ static void route_across_wires(
   const int num_batches =
       num_wires / params.batch_size + (num_wires % params.batch_size != 0);
 
+  // Keep A mode's exact batch semantics at one thread, but do not pay for
+  // atomics when no other worker can observe the occupancy matrices.
+  if (params.num_threads == 1) {
+    std::mt19937 thread_rng(0);
+    std::uniform_real_distribution<double> thread_route_choice_dist(0.0, 1.0);
+    std::vector<RouteUpdate> batch_routes;
+    batch_routes.reserve(std::min(params.batch_size, num_wires));
+
+    for (int iter = 0; iter < params.SA_iters; iter++) {
+      for (int batch = 0; batch < num_batches; batch++) {
+        const int batch_start = batch * params.batch_size;
+        const int batch_count =
+            std::min(params.batch_size, num_wires - batch_start);
+        batch_routes.clear();
+
+        for (int i = 0; i < batch_count; i++) {
+          const Wire curr = wires[batch_start + i];
+          const Point start = curr.pts[0];
+          const Point end = curr.pts[curr.num_pts - 1];
+          Wire best = curr;
+
+          if (thread_route_choice_dist(thread_rng) < params.SA_prob) {
+            best = choose_random_route(start, end, thread_rng);
+          } else {
+            const CurrentWireGeometry current_geometry =
+                make_current_wire_geometry(curr);
+            long long best_cost = calculate_wire_cost_across<false>(
+                curr, current_geometry, occupancy, occupancy_columns);
+            try_routes_across<false>(curr, current_geometry,
+                                     occupancy, occupancy_columns,
+                                     best, best_cost);
+          }
+          if (!same_wire_route(curr, best)) {
+            batch_routes.push_back({batch_start + i, best});
+          }
+        }
+
+        for (const RouteUpdate &update : batch_routes) {
+          const int w = update.wire_index;
+          add_wire_to_occupancy_across<false>(
+              wires[w], occupancy, occupancy_columns, -1);
+          add_wire_to_occupancy_across<false>(
+              update.route, occupancy, occupancy_columns, 1);
+          wires[w] = update.route;
+        }
+      }
+    }
+    return;
+  }
+
   // Each worker owns its RNG and pending route changes
   #pragma omp parallel
   {
@@ -899,11 +973,11 @@ static void route_across_wires(
           } else {
             const CurrentWireGeometry current_geometry =
                 make_current_wire_geometry(curr);
-            long long best_cost = calculate_wire_cost_across(
+            long long best_cost = calculate_wire_cost_across<true>(
                 curr, current_geometry, occupancy, occupancy_columns);
-            try_routes_across(curr, current_geometry,
-                              occupancy, occupancy_columns,
-                              best, best_cost);
+            try_routes_across<true>(curr, current_geometry,
+                                    occupancy, occupancy_columns,
+                                    best, best_cost);
           }
           // Remember only changed routes, without updating occupancy yet
           if (!same_wire_route(curr, best)) {
@@ -914,9 +988,9 @@ static void route_across_wires(
         // Commit only the changed wires after choosing the entire batch
         for (const RouteUpdate &update : batch_routes) {
           const int w = update.wire_index;
-          add_wire_to_occupancy_across(
+          add_wire_to_occupancy_across<true>(
               wires[w], occupancy, occupancy_columns, -1);
-          add_wire_to_occupancy_across(
+          add_wire_to_occupancy_across<true>(
               update.route, occupancy, occupancy_columns, 1);
           wires[w] = update.route;
         }
