@@ -93,19 +93,19 @@ Before timing, expand small-input checks to 1/2/4/8 threads and batch sizes
 
 ## 5. Across-Wires Knobs and First Measurements
 
-Constants beside the W knobs in main's student-writable initialization area:
+Chunk-size constant beside the W knobs in main's student-writable initialization area:
 
 ```cpp
-const omp_sched_t A_WIRE_SCHEDULE = omp_sched_dynamic;
 const int A_WIRE_CHUNK_SIZE = 1;
 ```
 
-`omp_set_schedule()` configures the calling thread before the parallel region.
-Workers inherit it, and A's loop uses `schedule(runtime)`.
+The A loop uses `#pragma omp for schedule(dynamic, A_WIRE_CHUNK_SIZE)`.
+Change `dynamic` to `static` directly in that pragma to compare schedules.
+No `omp_set_schedule()` call or runtime schedule setting is needed.
 
 | Knob | Meaning | First values to test |
 | --- | --- | --- |
-| Schedule | How batches are assigned | `omp_sched_static`, `omp_sched_dynamic` |
+| Schedule | How batches are assigned | `static`, `dynamic` in the pragma |
 | Chunk | Batches grouped per scheduling assignment | 1, 2, 4, 8 |
 | `-b` | Wires chosen before each batch commits | 1, 2, 4, 8, 16 |
 

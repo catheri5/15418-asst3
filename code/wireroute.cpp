@@ -507,6 +507,197 @@ static void add_wire_to_occupancy_across(
   }
 }
 
+struct RoutingParams {
+  int num_threads;
+  double SA_prob;
+  int SA_iters;
+  int batch_size;
+};
+
+// Initialize legal starting routes and build both occupancy views
+static void initialize_routes(
+    std::vector<Wire> &wires,
+    std::vector<std::vector<int>> &occupancy,
+    std::vector<std::vector<int>> &occupancy_columns) {
+  for (auto &wire : wires) {
+    Point start = wire.pts[0];
+    Point end = wire.pts[1];
+
+    if (start.x == end.x || start.y == end.y) {
+      wire.num_pts = 2;
+      wire.pts[1] = end;
+    } else {
+      wire.num_pts = 3;
+      wire.pts[1] = {end.x, start.y}; // x axis first
+      wire.pts[2] = end;
+    }
+
+    add_wire_to_occupancy_baseline(wire, occupancy, occupancy_columns, 1);
+  }
+}
+
+// Explore candidates for one wire in parallel
+static void route_within_wires(
+    std::vector<Wire> &wires,
+    std::vector<std::vector<int>> &occupancy,
+    std::vector<std::vector<int>> &occupancy_columns,
+    const RoutingParams &params) {
+  // WITHIN WIRE OPTIMIZATION KNOBS
+  const int W_WIRE_PARALLEL_THRESHOLD_MULTIPLIER = 4;
+  const int W_WIRE_CHUNK_SIZE = 1;
+
+  std::mt19937 rng(0);
+  std::uniform_real_distribution<double> route_choice_dist(0.0, 1.0);
+  const int num_wires = static_cast<int>(wires.size());
+
+  // Reuse per-thread result buffers across wire searches
+  const int nthreads = omp_get_max_threads();
+  std::vector<long long> thread_best_cost(nthreads);
+  std::vector<Wire> thread_best_route(nthreads);
+
+  for (int iter = 0; iter < params.SA_iters; iter++) {
+    for (int w = 0; w < num_wires; w++) {
+      Wire curr = wires[w];
+
+      // remove wire from current occupancy matrix
+      add_wire_to_occupancy_baseline(curr, occupancy, occupancy_columns, -1);
+
+      Point start = curr.pts[0];
+      Point end = curr.pts[curr.num_pts - 1];
+
+      // Count candidates without constructing or storing them
+      const long long num_routes = count_routes(start, end);
+
+      // baseline: compare against current wire route
+      Wire best = curr;
+
+      // Random route choosing with probability P
+      if (route_choice_dist(rng) < params.SA_prob) {
+        best = choose_random_route(start, end, rng);
+
+      } else {
+        long long best_cost = calculate_wire_cost_baseline(
+            curr, occupancy, occupancy_columns);
+
+        // check if above parallel threshold
+        const long long threshold =
+            1LL * W_WIRE_PARALLEL_THRESHOLD_MULTIPLIER * params.num_threads;
+        if (num_routes >= threshold) { // execute in parallel
+
+          // Reset costs so unused thread slots cannot retain old results
+          std::fill(thread_best_cost.begin(), thread_best_cost.end(), best_cost);
+
+          #pragma omp parallel 
+          {
+            int tid = omp_get_thread_num();
+            long long local_best_cost = best_cost;
+            Wire local_best_route = best;
+
+            #pragma omp for schedule(static, W_WIRE_CHUNK_SIZE) 
+            for (long long r = 0; r < num_routes; r++) {
+              // Construct and fully score this thread's next candidate
+              const Wire candidate = route_from_index(start, end, r);
+              try_candidate_route(candidate, occupancy, occupancy_columns,
+                                  local_best_route, local_best_cost);
+            }
+
+            thread_best_cost[tid] = local_best_cost;
+            thread_best_route[tid] = local_best_route;
+          }
+
+          // update overall best route variables from local bests
+          for (int t = 0; t < nthreads; t++) {
+            if (thread_best_cost[t] < best_cost) {
+              best_cost = thread_best_cost[t];
+              best = thread_best_route[t];
+            }
+          }
+          
+        } else { // execute sequentially
+          // find lowest cost route in this iteration
+          for (long long r = 0; r < num_routes; r++) {
+            const Wire candidate = route_from_index(start, end, r);
+            try_candidate_route(candidate, occupancy, occupancy_columns,
+                                best, best_cost);
+          }
+        }
+      }
+      wires[w] = best;
+      add_wire_to_occupancy_baseline(best, occupancy, occupancy_columns, 1);
+
+    }
+  }
+}
+
+// Choose and commit batches of wires in parallel
+static void route_across_wires(
+    std::vector<Wire> &wires,
+    std::vector<std::vector<int>> &occupancy,
+    std::vector<std::vector<int>> &occupancy_columns,
+    const RoutingParams &params) {
+  // ACROSS WIRE OPTIMIZATION KNOBS
+  // Change dynamic to static in the omp for to compare schedules
+  // Batches per assignment, wires per batch still comes from -b
+  const int A_WIRE_CHUNK_SIZE = 1;
+
+  const int num_wires = static_cast<int>(wires.size());
+  const int num_batches =
+      num_wires / params.batch_size + (num_wires % params.batch_size != 0);
+
+  // Each worker owns its RNG and temporary batch routes
+  #pragma omp parallel
+  {
+    std::mt19937 thread_rng(omp_get_thread_num());
+    std::uniform_real_distribution<double> thread_route_choice_dist(0.0, 1.0);
+    std::vector<Wire> batch_routes(std::min(params.batch_size, num_wires));
+
+    for (int iter = 0; iter < params.SA_iters; iter++) {
+      #pragma omp for schedule(dynamic, A_WIRE_CHUNK_SIZE)
+      for (int batch = 0; batch < num_batches; batch++) {
+        const int batch_start = batch * params.batch_size;
+        const int batch_count = std::min(params.batch_size, num_wires - batch_start);
+
+        // Choose every route before applying this batch's updates
+        for (int i = 0; i < batch_count; i++) {
+          const Wire curr = wires[batch_start + i];
+          const Point start = curr.pts[0];
+          const Point end = curr.pts[curr.num_pts - 1];
+          Wire best = curr;
+
+          if (thread_route_choice_dist(thread_rng) < params.SA_prob) {
+            best = choose_random_route(start, end, thread_rng);
+          } else {
+            long long best_cost = calculate_wire_cost_across(
+                curr, curr, occupancy, occupancy_columns);
+            const long long num_routes = count_routes(start, end);
+            for (long long r = 0; r < num_routes; r++) {
+              const Wire candidate = route_from_index(start, end, r);
+              const long long cost = calculate_wire_cost_across(
+                  candidate, curr, occupancy, occupancy_columns);
+              if (cost < best_cost) {
+                best_cost = cost;
+                best = candidate;
+              }
+            }
+          }
+          batch_routes[i] = best;
+        }
+
+        // Commit the batch with atomic increments and decrements
+        for (int i = 0; i < batch_count; i++) {
+          const int w = batch_start + i;
+          add_wire_to_occupancy_across(
+              wires[w], occupancy, occupancy_columns, -1);
+          add_wire_to_occupancy_across(
+              batch_routes[i], occupancy, occupancy_columns, 1);
+          wires[w] = batch_routes[i];
+        }
+      }
+      // The worksharing barrier finishes all commits before the next iteration
+    }
+  }
+}
+
 int main(int argc, char *argv[]) {
   const auto init_start = std::chrono::steady_clock::now();
 
@@ -597,16 +788,7 @@ int main(int argc, char *argv[]) {
   // Column view for contiguous vertical scoring in both modes
   std::vector<std::vector<int>> occupancy_columns(dim_x, std::vector<int>(dim_y));
 
-  // WITHIN WIRE OPTIMIZATION KNOBS
-  // multiplier to num_threads before work is split in parallel
-  const int W_WIRE_PARALLEL_THRESHOLD_MULTIPLIER = 4; 
-  const int W_WIRE_CHUNK_SIZE = 1;
-
-  // ACROSS WIRE OPTIMIZATION KNOBS
-  // Use omp_sched_static or omp_sched_dynamic
-  const omp_sched_t A_WIRE_SCHEDULE = omp_sched_dynamic;
-  // Batches per assignment, wires per batch still comes from -b
-  const int A_WIRE_CHUNK_SIZE = 1;
+  const RoutingParams params{num_threads, SA_prob, SA_iters, batch_size};
 
   // Student code end
   const double init_time =
@@ -625,163 +807,12 @@ int main(int argc, char *argv[]) {
   */
   omp_set_num_threads(num_threads);
   
-  // Initialize legal starting routes and build occupancy
-  for (auto &wire : wires) {
-    Point start = wire.pts[0];
-    Point end = wire.pts[1];
+  initialize_routes(wires, occupancy, occupancy_columns);
 
-    if (start.x == end.x || start.y == end.y) {
-      wire.num_pts = 2;
-      wire.pts[1] = end;
-    } else {
-      wire.num_pts = 3;
-      wire.pts[1] = {end.x, start.y}; // x axis first
-      wire.pts[2] = end;
-    }
-
-    add_wire_to_occupancy_baseline(wire, occupancy, occupancy_columns, 1);
-  }
-
-  std::mt19937 rng(0);
-  std::uniform_real_distribution<double> route_choice_dist(0.0, 1.0);
-
-  // Within wires
   if (parallel_mode == 'W') {
-    // Reuse per-thread result buffers across wire searches
-    const int nthreads = omp_get_max_threads();
-    std::vector<long long> thread_best_cost(nthreads);
-    std::vector<Wire> thread_best_route(nthreads);
-
-    for (int iter = 0; iter < SA_iters; iter++) {
-      for (int w = 0; w < num_wires; w++) {
-        Wire curr = wires[w];
-
-        // Remove wire from current occupancy matrix
-        add_wire_to_occupancy_baseline(curr, occupancy, occupancy_columns, -1);
-
-        Point start = curr.pts[0];
-        Point end = curr.pts[curr.num_pts - 1];
-
-        // Count candidates without constructing or storing them
-        const long long num_routes = count_routes(start, end);
-
-        // Baseline: compare against current wire route
-        Wire best = curr;
-
-        // Random route choosing with probability P
-        if (route_choice_dist(rng) < SA_prob) {
-          best = choose_random_route(start, end, rng);
-
-        } else {
-          long long best_cost = calculate_wire_cost_baseline(
-              curr, occupancy, occupancy_columns);
-
-          // Check if above parallel threshold
-          const long long threshold =
-              1LL * W_WIRE_PARALLEL_THRESHOLD_MULTIPLIER * num_threads;
-          if (num_routes >= threshold) { // execute in parallel
-
-            // Reset costs so unused thread slots cannot retain old results
-            std::fill(thread_best_cost.begin(), thread_best_cost.end(), best_cost);
-
-            #pragma omp parallel 
-            {
-              int tid = omp_get_thread_num();
-              long long local_best_cost = best_cost;
-              Wire local_best_route = best;
-
-              #pragma omp for schedule(static, W_WIRE_CHUNK_SIZE) 
-              for (long long r = 0; r < num_routes; r++) {
-                // Construct and fully score this thread's next candidate
-                const Wire candidate = route_from_index(start, end, r);
-                try_candidate_route(candidate, occupancy, occupancy_columns,
-                                    local_best_route, local_best_cost);
-              }
-
-              thread_best_cost[tid] = local_best_cost;
-              thread_best_route[tid] = local_best_route;
-            }
-
-            // update overall best route variables from local bests
-            for (int t = 0; t < nthreads; t++) {
-              if (thread_best_cost[t] < best_cost) {
-                best_cost = thread_best_cost[t];
-                best = thread_best_route[t];
-              }
-            }
-            
-          } else { // execute sequentially
-            // find lowest cost route in this iteration
-            for (long long r = 0; r < num_routes; r++) {
-              const Wire candidate = route_from_index(start, end, r);
-              try_candidate_route(candidate, occupancy, occupancy_columns,
-                                  best, best_cost);
-            }
-          }
-        }
-        wires[w] = best;
-        add_wire_to_occupancy_baseline(best, occupancy, occupancy_columns, 1);
-
-      }
-    }
+    route_within_wires(wires, occupancy, occupancy_columns, params);
   } else {
-    const int num_batches =
-        num_wires / batch_size + (num_wires % batch_size != 0);
-    // Workers inherit this runtime schedule from the calling thread
-    omp_set_schedule(A_WIRE_SCHEDULE, A_WIRE_CHUNK_SIZE);
-
-    // Each worker owns its RNG and temporary batch routes
-    #pragma omp parallel
-    {
-      std::mt19937 thread_rng(omp_get_thread_num());
-      std::uniform_real_distribution<double> thread_route_choice_dist(0.0, 1.0);
-      std::vector<Wire> batch_routes(std::min(batch_size, num_wires));
-
-      for (int iter = 0; iter < SA_iters; iter++) {
-        #pragma omp for schedule(runtime)
-        for (int batch = 0; batch < num_batches; batch++) {
-          const int batch_start = batch * batch_size;
-          const int batch_count = std::min(batch_size, num_wires - batch_start);
-
-          // Choose every route before applying this batch's updates
-          for (int i = 0; i < batch_count; i++) {
-            const Wire curr = wires[batch_start + i];
-            const Point start = curr.pts[0];
-            const Point end = curr.pts[curr.num_pts - 1];
-            Wire best = curr;
-
-            if (thread_route_choice_dist(thread_rng) < SA_prob) {
-              best = choose_random_route(start, end, thread_rng);
-            } else {
-              long long best_cost = calculate_wire_cost_across(
-                  curr, curr, occupancy, occupancy_columns);
-              const long long num_routes = count_routes(start, end);
-              for (long long r = 0; r < num_routes; r++) {
-                const Wire candidate = route_from_index(start, end, r);
-                const long long cost = calculate_wire_cost_across(
-                    candidate, curr, occupancy, occupancy_columns);
-                if (cost < best_cost) {
-                  best_cost = cost;
-                  best = candidate;
-                }
-              }
-            }
-            batch_routes[i] = best;
-          }
-
-          // Commit the batch with atomic increments and decrements
-          for (int i = 0; i < batch_count; i++) {
-            const int w = batch_start + i;
-            add_wire_to_occupancy_across(
-                wires[w], occupancy, occupancy_columns, -1);
-            add_wire_to_occupancy_across(
-                batch_routes[i], occupancy, occupancy_columns, 1);
-            wires[w] = batch_routes[i];
-          }
-        }
-        // The worksharing barrier finishes all commits before the next iteration
-      }
-    }
+    route_across_wires(wires, occupancy, occupancy_columns, params);
   }
 
   // Student code end

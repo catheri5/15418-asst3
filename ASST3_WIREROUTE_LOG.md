@@ -294,20 +294,19 @@ Final graphs, cache-miss data, and PSC results remain pending.
 
 ### Across-Wires Knobs
 
-These constants are in main's student-writable initialization area, beside W's knobs:
+The chunk-size constant is in main's student-writable initialization area, beside W's knobs:
 
 ```cpp
-const omp_sched_t A_WIRE_SCHEDULE = omp_sched_dynamic;
 const int A_WIRE_CHUNK_SIZE = 1;
 ```
 
-- Switch schedule between `omp_sched_static` and `omp_sched_dynamic`
+- Switch `dynamic` to `static` directly in the A-mode worksharing pragma
 - Chunk size is the number of batches per scheduling assignment, not wires
   Each batch still chooses/commits its own `-b` wires before moving to the next
 - Batch size remains the runtime `-b` parameter; it controls delayed-update
   granularity and therefore may affect final routing quality
-- `omp_set_schedule()` runs before the parallel region and workers inherit it
-  The A-mode worksharing loop uses `schedule(runtime)`
+- The A loop uses `schedule(dynamic, A_WIRE_CHUNK_SIZE)`
+  The earlier runtime-schedule setting was removed to match the W-style pragma
 - No A threshold multiplier yet; the W route-count threshold is not an A knob
 - A results can vary with work assignment, thread-specific RNG streams, and
   concurrent occupancy updates, not only equal-cost tie-breaking
