@@ -864,9 +864,7 @@ static void route_across_wires(
     std::vector<std::vector<int>> &occupancy_columns,
     const RoutingParams &params) {
   // ACROSS WIRE OPTIMIZATION KNOBS
-  // Guided starts with larger contiguous chunks (lower scheduling overhead and
-  // better wire/route locality), then decreases to one batch to preserve load
-  // balance for the uneven candidate-search costs near the end of an iteration.
+  // Change dynamic to static in the omp for to compare schedules
   // Batches per assignment, wires per batch still comes from -b
   const int A_WIRE_CHUNK_SIZE = 1;
 
@@ -883,7 +881,7 @@ static void route_across_wires(
     batch_routes.reserve(std::min(params.batch_size, num_wires));
 
     for (int iter = 0; iter < params.SA_iters; iter++) {
-      #pragma omp for schedule(guided, A_WIRE_CHUNK_SIZE)
+      #pragma omp for schedule(dynamic, A_WIRE_CHUNK_SIZE)
       for (int batch = 0; batch < num_batches; batch++) {
         const int batch_start = batch * params.batch_size;
         const int batch_count = std::min(params.batch_size, num_wires - batch_start);
