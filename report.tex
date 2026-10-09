@@ -2,7 +2,7 @@
 \usepackage{hyperref}
 \usepackage{graphicx}
 \usepackage{amsmath}
-% The course environment normally provides placeins.  Keep the source
+% The course environment normally provides placeins. Keep the source
 % buildable in minimal TeX installations as well; the fallback is only a
 % layout hint and does not affect report content.
 \IfFileExists{placeins.sty}{\usepackage{placeins}}{\newcommand{\FloatBarrier}{\par\medskip}}
@@ -417,103 +417,6 @@ overlap.  We will only pursue this direction if cache miss or synchronization
 measurements suggest that the extra work is justified.
 
 \FloatBarrier
-\section{Tentative GHC Within-Wires Results}
-
-Tables~\ref{tab:ghc-ww-few}--\ref{tab:ghc-ww-abundant} record the supplied
-W-mode outputs for the three required timing inputs. Each input uses a
-$2048\times2048$ grid, $P=0.1$, five iterations, and batch size one.
-These tables are tentative: repetition counts and compiled scheduling,
-chunk-size, and threshold settings remain to be confirmed before finalizing
-the experimental configuration. We do not label these supplied outputs as
-three-run medians without that confirmation.
-
-Computation time includes initial route placement and occupancy filling.
-Total time is initialization plus computation. For each input separately,
-speedups use that input's own one-thread baseline:
-\[
-S_p^{\mathrm{compute}}=\frac{C_1}{C_p},
-\qquad
-S_p^{\mathrm{total}}=\frac{I_1+C_1}{I_p+C_p}.
-\]
-Times are displayed to three significant figures; speedups are calculated
-from the unrounded supplied values, not the rounded table entries.
-
-\begin{table}[!htbp]
-\centering
-\small
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{@{}rrrrrrrr@{}}
-\toprule
-Threads & Init (s) & Compute (s) & Total (s) & Compute $S_p$ & Total $S_p$ & Max occ. & Cost \\
-\midrule
-1 & 0.0390 & 2.82 & 2.86 & $1.00\times$ & $1.00\times$ & 2 & 29240 \\
-2 & 0.0439 & 1.54 & 1.58 & $1.83\times$ & $1.81\times$ & 2 & 29240 \\
-4 & 0.0411 & 0.889 & 0.930 & $3.17\times$ & $3.08\times$ & 2 & 29240 \\
-8 & 0.0439 & 0.555 & 0.599 & $5.08\times$ & $4.77\times$ & 2 & 29240 \\
-\bottomrule
-\end{tabular}
-\caption{Tentative GHC within-wires results for \texttt{few\_wires.txt}, 128 wires.
-All supplied outputs passed validation.}
-\label{tab:ghc-ww-few}
-\end{table}
-
-\begin{table}[!htbp]
-\centering
-\small
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{@{}rrrrrrrr@{}}
-\toprule
-Threads & Init (s) & Compute (s) & Total (s) & Compute $S_p$ & Total $S_p$ & Max occ. & Cost \\
-\midrule
-1 & 0.0456 & 9.34 & 9.39 & $1.00\times$ & $1.00\times$ & 3 & 267723 \\
-2 & 0.0460 & 4.87 & 4.91 & $1.92\times$ & $1.91\times$ & 3 & 267957 \\
-4 & 0.0456 & 2.62 & 2.66 & $3.57\times$ & $3.52\times$ & 3 & 267771 \\
-8 & 0.0460 & 1.48 & 1.52 & $6.32\times$ & $6.16\times$ & 3 & 267735 \\
-\bottomrule
-\end{tabular}
-\caption{Tentative GHC within-wires results for \texttt{medium\_wires.txt}, 2048 wires.
-All supplied outputs passed validation.}
-\label{tab:ghc-ww-medium}
-\end{table}
-
-\begin{table}[!htbp]
-\centering
-\small
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{@{}rrrrrrrr@{}}
-\toprule
-Threads & Init (s) & Compute (s) & Total (s) & Compute $S_p$ & Total $S_p$ & Max occ. & Cost \\
-\midrule
-1$^{*}$ & 0.0616 & 24.3 & 24.4 & $1.00\times$ & $1.00\times$ & 4 & 1539328 \\
-2 & 0.0625 & 12.6 & 12.7 & $1.93\times$ & $1.92\times$ & 4 & 1539380 \\
-4 & 0.0621 & 6.76 & 6.83 & $3.59\times$ & $3.57\times$ & 4 & 1538772 \\
-8 & 0.0614 & 3.75 & 3.81 & $6.48\times$ & $6.39\times$ & 4 & 1539104 \\
-\bottomrule
-\end{tabular}
-\caption{Tentative GHC within-wires results for \texttt{abundant\_wires.txt}, 16384 wires.
-All supplied outputs passed validation. $^{*}$The first run's thread-count line
-was omitted; one thread is inferred from the supplied order and needs confirmation.}
-\label{tab:ghc-ww-abundant}
-\end{table}
-
-\FloatBarrier
-At eight threads, computation speedup is $5.08\times$ for few,
-$6.32\times$ for medium, and $6.48\times$ for abundant wires.
-Total-time speedups are lower: $4.77\times$, $6.16\times$, and
-$6.39\times$, respectively. Initialization is a larger fraction of the
-short few-input run, so it reduces total speedup more noticeably there.
-The larger inputs show better measured computation scaling, consistent
-with more useful work amortizing overhead, although profiling is needed
-to separate that explanation from memory-system and workload effects.
-
-All three inputs improve monotonically from one through eight threads,
-with no observed performance drop-off. Few retains cost 29240 at every
-thread count; medium and abundant costs vary slightly, consistent with
-the schedule-dependent equal-cost choices discussed earlier.
-These tables do not replace the required speedup graphs, cache-miss
-measurements, routing images, or PSC evaluation.
-
-\FloatBarrier
 \section{Final Implementation Decisions and PSC Evaluation}
 \label{sec:final-decisions}
 
@@ -790,18 +693,198 @@ good-performance reference.}
 \label{tab:reference-one-thread}
 \end{table}
 
+\subsection{Comparison with GHC}
+
+At eight workers, GHC W-mode speedups are $7.70\times$, $7.20\times$, and
+$5.95\times$ for few, medium, and abundant inputs, compared with PSC values of
+$7.81\times$, $7.30\times$, and $6.43\times$. The same qualitative limit is
+visible on both systems: within-wires exposes candidates of only one wire at a
+time, so increasingly large teams eventually encounter insufficient work,
+barriers, and shared-occupancy traffic. PSC retains a modest advantage for
+abundant W at eight threads, but neither platform makes W ideal at large
+machine sizes.
+
+For A mode, GHC eight-worker speedups are $7.35\times$, $6.88\times$, and
+$6.40\times$, whereas PSC reports $8.45\times$, $8.56\times$, and
+$8.47\times$. PSC's lower one-thread A performance makes its relative speedup
+somewhat more favorable, so this comparison is not solely a property of the
+parallel schedule. Still, the PSC 128-thread curves demonstrate the key
+algorithmic difference: multiple selectable wires keep far more independent
+work available than W mode, especially on medium and abundant inputs. We
+therefore use GHC to study cache and eight-worker behavior and PSC to expose
+the high-core-count scalability limit.
+
 \FloatBarrier
-\section{Remaining Report Work}
+\section{Final GHC Evaluation}
+\label{sec:ghc-final}
 
-The PSC data collection is complete and preserved. The remaining work is to
-generate the required PSC computation- and total-speedup figures from the
-summary CSV, collect the final controlled GHC tables for both W and A at 1, 2,
-4, and 8 threads, and complete the two required A-mode GHC sensitivity studies
-(random-route probability and problem size). The earlier tentative GHC W-mode
-tables are retained above as working notes; they should be replaced by
-median-of-three final measurements before submission. We should also include
-one or more final route visualizations and prune the exploratory implementation
-history once the required results and figures are in place.
+We collected the final GHC data on \texttt{ghc39} with \texttt{OMP\_PLACES=cores}
+and \texttt{OMP\_PROC\_BIND=close}. Every configuration used $P=0.1$, five
+annealing iterations, and A-mode batch size one unless a sensitivity experiment
+explicitly varied $P$. Each timing configuration was run three times and the
+tables use the median initialization and computation times. Every one of the
+128 timed routing executions and all 24 counter executions passed the supplied
+validator. The raw, labeled program and \texttt{perf} output is preserved in
+\texttt{code/benchmark\_results/ghc\_remaining\_20261008\_193845/full.log}.
 
+Table~\ref{tab:ghc-final-compute} reports final computation medians. W is
+slightly faster than A at one thread for medium and abundant inputs because it
+uses ordinary occupancy reads after removing its current wire. A instead uses
+atomic reads so that concurrent batch commits remain data-race free. Both modes
+are close to ideal through four threads. At eight threads, W is strongest on
+few wires ($7.70\times$) and A is strongest on few wires ($7.35\times$), while
+the abundant inputs show lower speedup because occupancy traffic and update
+contention become more significant.
+
+\begin{table}[!htbp]
+\centering
+\small
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+Mode & Input & 1 thread & 2 threads & 4 threads & 8 threads \\
+\midrule
+W & Few      & 2.668 & 1.311 & 0.669 & 0.346 \\
+W & Medium   & 9.302 & 4.610 & 2.396 & 1.291 \\
+W & Abundant & 24.632 & 12.330 & 6.695 & 4.144 \\
+\midrule
+A & Few      & 2.601 & 1.300 & 0.674 & 0.354 \\
+A & Medium   & 9.725 & 4.865 & 2.526 & 1.413 \\
+A & Abundant & 27.401 & 13.723 & 7.340 & 4.285 \\
+\bottomrule
+\end{tabular}
+\caption{Final GHC median computation times (s), three trials per configuration.}
+\label{tab:ghc-final-compute}
+\end{table}
+
+\begin{table}[!htbp]
+\centering
+\small
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+Mode & Input & $S_2^{\mathrm{comp}}$ & $S_4^{\mathrm{comp}}$ &
+$S_8^{\mathrm{comp}}$ & $S_8^{\mathrm{total}}$ \\
+\midrule
+W & Few      & 2.04 & 3.99 & 7.70 & 7.55 \\
+W & Medium   & 2.02 & 3.88 & 7.20 & 7.16 \\
+W & Abundant & 2.00 & 3.68 & 5.95 & 5.93 \\
+\midrule
+A & Few      & 2.00 & 3.86 & 7.35 & 7.21 \\
+A & Medium   & 2.00 & 3.85 & 6.88 & 6.85 \\
+A & Abundant & 2.00 & 3.73 & 6.40 & 6.38 \\
+\bottomrule
+\end{tabular}
+\caption{Final GHC speedups. Computation speedup is $C_1/C_p$; total speedup
+uses median initialization plus computation time.}
+\label{tab:ghc-final-speedup}
+\end{table}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.94\textwidth]{figures/ghc_speedups.pdf}
+\caption{Required GHC speedup curves. Each curve uses the three-trial median
+for its input and mode; the dashed line is ideal linear scaling.}
+\label{fig:ghc-speedups}
+\end{figure}
+
+\subsection{Cache-miss measurements}
+
+For each core configuration we also ran \texttt{perf stat -e cache-misses}.
+The counter covers the entire OpenMP process, so its reported total includes all
+workers. The assignment's arithmetic mean per-worker value is therefore total
+misses divided by the requested worker count. These are single representative
+counter runs rather than three-run medians and should be interpreted as
+descriptive hardware-counter observations, not as a second timing experiment.
+
+\begin{table}[!htbp]
+\centering
+\scriptsize
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+Input & Threads & W total (M) & W/worker (M) & A total (M) & A/worker (M) \\
+\midrule
+Few & 1 & 7.56 & 7.56 & 7.50 & 7.50 \\
+    & 2 & 7.59 & 3.80 & 7.51 & 3.75 \\
+    & 4 & 7.88 & 1.97 & 7.53 & 1.88 \\
+    & 8 & 7.70 & 0.96 & 7.75 & 0.97 \\
+\midrule
+Medium & 1 & 27.48 & 27.48 & 28.87 & 28.87 \\
+       & 2 & 34.51 & 17.25 & 28.76 & 14.38 \\
+       & 4 & 35.45 & 8.86 & 29.25 & 7.31 \\
+       & 8 & 33.35 & 4.17 & 29.42 & 3.68 \\
+\midrule
+Abundant & 1 & 114.05 & 114.05 & 120.34 & 120.34 \\
+         & 2 & 145.79 & 72.89 & 117.97 & 58.98 \\
+         & 4 & 144.97 & 36.24 & 118.92 & 29.73 \\
+         & 8 & 135.90 & 16.99 & 117.89 & 14.74 \\
+\bottomrule
+\end{tabular}
+\caption{GHC cache misses from representative \texttt{perf stat} runs. M denotes
+millions of misses.}
+\label{tab:ghc-cache}
+\end{table}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.94\textwidth]{figures/ghc_cache_misses.pdf}
+\caption{Required GHC cache-miss plots. Top: process-wide total misses. Bottom:
+arithmetic mean misses per requested worker (total divided by thread count).}
+\label{fig:ghc-cache}
+\end{figure}
+
+The dual occupancy layout makes both horizontal and vertical scans contiguous,
+which keeps A-mode aggregate cache misses nearly flat as workers increase.
+W's aggregate misses rise on medium and abundant inputs because candidate
+scoring repeatedly rereads the shared occupancy arrays in separate per-wire
+parallel searches. Nevertheless, per-worker misses decline strongly with
+threads in both modes. This supports the measured speedups, while also helping
+explain why abundant W does not approach the ideal eightfold speedup.
+
+\subsection{A-mode sensitivity studies and output}
+
+The required A-mode probability sweep on medium input was stable: computation
+speedup at eight threads was $7.39\times$ for $P=0.01$, $7.40\times$ for
+$P=0.1$, and $7.39\times$ for $P=0.5$. Higher $P$ reduces absolute work
+(median one-thread computation times 10.697, 9.750, and 5.504 seconds), but
+does not materially change parallel efficiency.
+
+For the problem-size studies, eight-thread A-mode speedups were $7.20\times$,
+$6.39\times$, and $7.36\times$ for grid dimensions 512, 2048, and 8192.
+With 256, 1024, and 4096 wires on the 2048 grid, they were $7.39\times$,
+$7.27\times$, and $6.38\times$, respectively. Thus A mode generally has
+enough independent wire work to scale well at eight workers; the largest
+wire-count case shows the expected loss from greater occupancy interference.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.98\textwidth]{figures/ghc_sensitivity.pdf}
+\caption{Required A-mode GHC sensitivity studies. Dashed lines mark ideal
+eight-thread speedup.}
+\label{fig:ghc-sensitivity}
+\end{figure}
+
+Figure~\ref{fig:ghc-routes} gives the required eight-thread medium-input
+routing output for both modes. Both passed validation; their final costs differ
+slightly because legal equal-cost route choices can be schedule dependent.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.47\textwidth]{code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_W_wire_plot.png}
+\hfill
+\includegraphics[width=0.47\textwidth]{code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_A_wire_plot.png}
+\caption{Medium-input routing output at eight GHC workers: within-wires (left)
+and across-wires (right).}
+\label{fig:ghc-routes}
+\end{figure}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.47\textwidth]{code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_W_occupancy.png}
+\hfill
+\includegraphics[width=0.47\textwidth]{code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_A_occupancy.png}
+\caption{Graphical occupancy matrices for the same medium-input eight-worker
+runs: within-wires (left) and across-wires (right). White, blue, red, and
+purple denote occupancy 0, 1, 2, and 3, respectively.}
+\label{fig:ghc-occupancy}
+\end{figure}
 
 \end{document}

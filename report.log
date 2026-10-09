@@ -1,9 +1,10 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.7.22)  8 OCT 2026 19:09
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.7.22)  8 OCT 2026 20:26
 entering extended mode
  restricted \write18 enabled.
+ file:line:error style messages enabled.
  %&-line parsing enabled.
-**report.tex
-(./report.tex
+**/Users/jason/Desktop/CMU/15418/asst3/report.tex
+(/Users/jason/Desktop/CMU/15418/asst3/report.tex
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
 (/Users/jason/Library/TinyTeX/texmf-dist/tex/latex/base/article.cls
@@ -265,52 +266,75 @@ Overfull \hbox (5.27415pt too wide) in paragraph at lines 22--28
 [1
 
 {/Users/jason/Library/TinyTeX/texmf-var/fonts/map/pdftex/updmap/pdftex.map}] [2] [3] [4] [5] [6] [7] [8] [9]
-Overfull \hbox (2.64818pt too wide) in paragraph at lines 464--475
- [][] 
- []
-
-
-Overfull \hbox (7.6482pt too wide) in paragraph at lines 483--495
- [][] 
- []
-
-
-Overfull \hbox (7.24838pt too wide) in paragraph at lines 500--508
-[]\OT1/cmr/m/n/10.95 At eight threads, com-pu-ta-tion speedup is $5\OML/cmm/m/it/10.95 :\OT1/cmr/m/n/10.95 08\OMS/cmsy/m/n/10.95 ^^B$ \OT1/cmr/m/n/10.95 for few, $6\OML/cmm/m/it/10.95 :\OT1/cmr/m/n/10.95 32\OMS/cmsy/m/n/10.95 ^^B$ \OT1/cmr/m/n/10.95 for medium,
- []
-
-[10]
-Overfull \hbox (11.06367pt too wide) in paragraph at lines 532--542
+Overfull \hbox (11.06367pt too wide) in paragraph at lines 435--445
  []\OT1/cmr/bx/n/10.95 Exhaustive route set and di-rect con-struc-tion.[] \OT1/cmr/m/n/10.95 For ev-ery greedy reroute,
  []
 
-[11] [12] [13] [14]
-<figures/psc_speedups.pdf, id=176, 650.43pt x 483.8075pt>
+[10] [11] [12]
+<figures/psc_speedups.pdf, id=168, 650.43pt x 483.8075pt>
 File: figures/psc_speedups.pdf Graphic file (type pdf)
 <use figures/psc_speedups.pdf>
-Package pdftex.def Info: figures/psc_speedups.pdf  used on input line 733.
+Package pdftex.def Info: figures/psc_speedups.pdf  used on input line 636.
 (pdftex.def)             Requested size: 360.0pt x 267.78549pt.
- [15] [16 <./figures/psc_speedups.pdf>] [17] [18] (./report.aux)
+ [13] [14 <./figures/psc_speedups.pdf>] [15] [16]
+<figures/ghc_speedups.pdf, id=199, 650.43pt x 484.209pt>
+File: figures/ghc_speedups.pdf Graphic file (type pdf)
+<use figures/ghc_speedups.pdf>
+Package pdftex.def Info: figures/ghc_speedups.pdf  used on input line 783.
+(pdftex.def)             Requested size: 338.40088pt x 251.92311pt.
+ [17] [18 <./figures/ghc_speedups.pdf>]
+<figures/ghc_cache_misses.pdf, id=265, 650.43pt x 484.209pt>
+File: figures/ghc_cache_misses.pdf Graphic file (type pdf)
+<use figures/ghc_cache_misses.pdf>
+Package pdftex.def Info: figures/ghc_cache_misses.pdf  used on input line 828.
+(pdftex.def)             Requested size: 338.40088pt x 251.92311pt.
+ [19] [20 <./figures/ghc_cache_misses.pdf>]
+<figures/ghc_sensitivity.pdf, id=332, 722.7pt x 252.945pt>
+File: figures/ghc_sensitivity.pdf Graphic file (type pdf)
+<use figures/ghc_sensitivity.pdf>
+Package pdftex.def Info: figures/ghc_sensitivity.pdf  used on input line 859.
+(pdftex.def)             Requested size: 352.79846pt x 123.48097pt.
+<code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_W_wire_plot.png, id=334, 8262.87pt x 8343.17pt>
+File: code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_W_wire_plot.png Graphic file (type png)
+<use code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_W_wire_plot.png>
+Package pdftex.def Info: code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_W_wire_plot.png  used on input line 871.
+(pdftex.def)             Requested size: 169.20044pt x 170.71782pt.
+<code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_A_wire_plot.png, id=335, 8262.87pt x 8343.17pt>
+File: code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_A_wire_plot.png Graphic file (type png)
+<use code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_A_wire_plot.png>
+Package pdftex.def Info: code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_A_wire_plot.png  used on input line 873.
+(pdftex.def)             Requested size: 169.20044pt x 170.71782pt.
+<code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_W_occupancy.png, id=336, 1003.75pt x 1003.75pt>
+File: code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_W_occupancy.png Graphic file (type png)
+<use code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_W_occupancy.png>
+Package pdftex.def Info: code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_W_occupancy.png  used on input line 881.
+(pdftex.def)             Requested size: 169.20044pt x 169.19554pt.
+<code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_A_occupancy.png, id=338, 1003.75pt x 1003.75pt>
+File: code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_A_occupancy.png Graphic file (type png)
+<use code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_A_occupancy.png>
+Package pdftex.def Info: code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_A_occupancy.png  used on input line 883.
+(pdftex.def)             Requested size: 169.20044pt x 169.19554pt.
+ [21 <./figures/ghc_sensitivity.pdf> <./code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_W_wire_plot.png (PNG copy)> <./code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_A_wire_plot.png (PNG copy)>] [22 <./code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_W_occupancy.png> <./code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_A_occupancy.png>] (./report.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
 Package rerunfilecheck Info: File `report.out' has not changed.
-(rerunfilecheck)             Checksum: 2F99029DA11B102B797A2DFCA95096D1;4117.
+(rerunfilecheck)             Checksum: CB6F620DE645E278B720BF5E820A8315;4479.
  ) 
 Here is how much of TeX's memory you used:
- 8973 strings out of 469515
- 138291 string characters out of 5469129
- 561541 words of memory out of 5000000
- 37490 multiletter control sequences out of 15000+600000
+ 9042 strings out of 469515
+ 141932 string characters out of 5469129
+ 561175 words of memory out of 5000000
+ 37547 multiletter control sequences out of 15000+600000
  634720 words of font info for 65 fonts, out of 8000000 for 9000
  14 hyphenation exceptions out of 8191
- 75i,10n,79p,458b,478s stack positions out of 10000i,1000n,20000p,200000b,200000s
-</Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi7.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi8.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr12.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr17.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt10.pfb>
-Output written on report.pdf (18 pages, 224607 bytes).
+ 75i,11n,79p,495b,465s stack positions out of 10000i,1000n,20000p,200000b,200000s
+</Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi8.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr12.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr17.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb></Users/jason/Library/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt10.pfb>
+Output written on report.pdf (22 pages, 1211358 bytes).
 PDF statistics:
- 275 PDF objects out of 1000 (max. 8388607)
- 224 compressed objects within 3 object streams
- 57 named destinations out of 1000 (max. 500000)
- 158 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 471 PDF objects out of 1000 (max. 8388607)
+ 268 compressed objects within 3 object streams
+ 68 named destinations out of 1000 (max. 500000)
+ 209 words of extra memory for PDF output out of 10000 (max. 10000000)
 

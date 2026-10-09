@@ -1,0 +1,685 @@
+=== Assignment 3 remaining GHC benchmark ===
+started: 2026-10-08T19:28:09-04:00
+host: ghc39.ghc.andrew.cmu.edu
+cwd: /afs/andrew.cmu.edu/usr4/jasont2/private/15418/asst3/code
+git commit: unknown
+TRIALS=1 RUN_CACHE=0 SA_PROB=0.1 SA_ITERS=5 BATCH_SIZE=1
+OMP_PROC_BIND=close OMP_PLACES=cores
+
+g++ -Wall -O3 -std=c++17 -m64 -I. -fopenmp -Wno-unknown-pragmas -c wireroute.cpp
+g++ -Wall -O3 -std=c++17 -m64 -I. -fopenmp -Wno-unknown-pragmas   -c -o validate.o validate.cpp
+g++ -Wall -O3 -std=c++17 -m64 -I. -fopenmp -Wno-unknown-pragmas -o wireroute wireroute.o validate.o
+### 1. Required core timing matrix: W/A x few/medium/abundant x 1/2/4/8
+=== CASE suite=core input=inputs/timeinput/few_wires.txt mode=W threads=1 p=0.1 trial=1 ===
+Number of threads: 1
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/few_wires.txt
+Parallel mode: W
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=128
+Initialization time (sec): 0.0120793660
+Computation time (sec): 2.6914097330
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 2
+Total cost: 29240
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/few_wires.txt mode=W threads=2 p=0.1 trial=1 ===
+Number of threads: 2
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/few_wires.txt
+Parallel mode: W
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=128
+Initialization time (sec): 0.0220960720
+Computation time (sec): 1.3171817330
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 2
+Total cost: 29240
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/few_wires.txt mode=W threads=4 p=0.1 trial=1 ===
+Number of threads: 4
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/few_wires.txt
+Parallel mode: W
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=128
+Initialization time (sec): 0.0079799040
+Computation time (sec): 0.6749678130
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 2
+Total cost: 29240
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/few_wires.txt mode=W threads=8 p=0.1 trial=1 ===
+Number of threads: 8
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/few_wires.txt
+Parallel mode: W
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=128
+Initialization time (sec): 0.0080287190
+Computation time (sec): 0.3468589390
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 2
+Total cost: 29240
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/few_wires.txt mode=A threads=1 p=0.1 trial=1 ===
+Number of threads: 1
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/few_wires.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=128
+Initialization time (sec): 0.0082633430
+Computation time (sec): 2.6104911880
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 2
+Total cost: 29240
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/few_wires.txt mode=A threads=2 p=0.1 trial=1 ===
+Number of threads: 2
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/few_wires.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=128
+Initialization time (sec): 0.0078815310
+Computation time (sec): 1.3091784580
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 2
+Total cost: 29240
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/few_wires.txt mode=A threads=4 p=0.1 trial=1 ===
+Number of threads: 4
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/few_wires.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=128
+Initialization time (sec): 0.0079699190
+Computation time (sec): 0.6626203210
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 2
+Total cost: 29250
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/few_wires.txt mode=A threads=8 p=0.1 trial=1 ===
+Number of threads: 8
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/few_wires.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=128
+Initialization time (sec): 0.0081935560
+Computation time (sec): 0.3560732660
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 2
+Total cost: 29242
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/medium_wires.txt mode=W threads=1 p=0.1 trial=1 ===
+Number of threads: 1
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/medium_wires.txt
+Parallel mode: W
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=2048
+Initialization time (sec): 0.0093730320
+Computation time (sec): 9.3036103810
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 267723
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/medium_wires.txt mode=W threads=2 p=0.1 trial=1 ===
+Number of threads: 2
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/medium_wires.txt
+Parallel mode: W
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=2048
+Initialization time (sec): 0.0083185130
+Computation time (sec): 4.6060231830
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 267957
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/medium_wires.txt mode=W threads=4 p=0.1 trial=1 ===
+Number of threads: 4
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/medium_wires.txt
+Parallel mode: W
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=2048
+Initialization time (sec): 0.0085028830
+Computation time (sec): 2.3934530530
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 267771
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/medium_wires.txt mode=W threads=8 p=0.1 trial=1 ===
+Number of threads: 8
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/medium_wires.txt
+Parallel mode: W
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=2048
+Initialization time (sec): 0.0085554210
+Computation time (sec): 1.2738224420
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 267735
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/medium_wires.txt mode=A threads=1 p=0.1 trial=1 ===
+Number of threads: 1
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/medium_wires.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=2048
+Initialization time (sec): 0.0086057240
+Computation time (sec): 9.7181325250
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 267723
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/medium_wires.txt mode=A threads=2 p=0.1 trial=1 ===
+Number of threads: 2
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/medium_wires.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=2048
+Initialization time (sec): 0.0085549070
+Computation time (sec): 4.9065943670
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 267559
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/medium_wires.txt mode=A threads=4 p=0.1 trial=1 ===
+Number of threads: 4
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/medium_wires.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=2048
+Initialization time (sec): 0.0083872370
+Computation time (sec): 2.5058494270
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 267601
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/medium_wires.txt mode=A threads=8 p=0.1 trial=1 ===
+Number of threads: 8
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/medium_wires.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=2048
+Initialization time (sec): 0.0086301920
+Computation time (sec): 1.3013028720
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 267509
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/abundant_wires.txt mode=W threads=1 p=0.1 trial=1 ===
+Number of threads: 1
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/abundant_wires.txt
+Parallel mode: W
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=16384
+Initialization time (sec): 0.0114877760
+Computation time (sec): 24.6538360180
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 4
+Total cost: 1539328
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/abundant_wires.txt mode=W threads=2 p=0.1 trial=1 ===
+Number of threads: 2
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/abundant_wires.txt
+Parallel mode: W
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=16384
+Initialization time (sec): 0.0114884330
+Computation time (sec): 12.3283564060
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 4
+Total cost: 1539380
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/abundant_wires.txt mode=W threads=4 p=0.1 trial=1 ===
+Number of threads: 4
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/abundant_wires.txt
+Parallel mode: W
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=16384
+Initialization time (sec): 0.0113748990
+Computation time (sec): 6.6089012200
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 4
+Total cost: 1538772
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/abundant_wires.txt mode=W threads=8 p=0.1 trial=1 ===
+Number of threads: 8
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/abundant_wires.txt
+Parallel mode: W
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=16384
+Initialization time (sec): 0.0112255130
+Computation time (sec): 4.1894028750
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 4
+Total cost: 1539104
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/abundant_wires.txt mode=A threads=1 p=0.1 trial=1 ===
+Number of threads: 1
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/abundant_wires.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=16384
+Initialization time (sec): 0.0112973800
+Computation time (sec): 27.4263660720
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 4
+Total cost: 1539328
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/abundant_wires.txt mode=A threads=2 p=0.1 trial=1 ===
+Number of threads: 2
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/abundant_wires.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=16384
+Initialization time (sec): 0.0114499390
+Computation time (sec): 13.7389340070
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 4
+Total cost: 1537834
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/abundant_wires.txt mode=A threads=4 p=0.1 trial=1 ===
+Number of threads: 4
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/abundant_wires.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=16384
+Initialization time (sec): 0.0112337970
+Computation time (sec): 7.1835225160
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 4
+Total cost: 1540204
+=== CASE_STATUS=0 ===
+
+=== CASE suite=core input=inputs/timeinput/abundant_wires.txt mode=A threads=8 p=0.1 trial=1 ===
+Number of threads: 8
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/abundant_wires.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=16384
+Initialization time (sec): 0.0115892210
+Computation time (sec): 4.2574274430
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 4
+Total cost: 1539506
+=== CASE_STATUS=0 ===
+
+### 3. Required A-mode probability sweep: medium, p={0.01,0.1,0.5}, 1/8 threads
+=== CASE suite=probability input=inputs/timeinput/medium_wires.txt mode=A threads=1 p=0.01 trial=1 ===
+Number of threads: 1
+Simulated annealing probability parameter: 0.01
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/medium_wires.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=2048
+Initialization time (sec): 0.0087710210
+Computation time (sec): 10.7097656170
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 2
+Total cost: 266579
+=== CASE_STATUS=0 ===
+
+=== CASE suite=probability input=inputs/timeinput/medium_wires.txt mode=A threads=8 p=0.01 trial=1 ===
+Number of threads: 8
+Simulated annealing probability parameter: 0.01
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/medium_wires.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=2048
+Initialization time (sec): 0.0083981560
+Computation time (sec): 1.4329829840
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 2
+Total cost: 266519
+=== CASE_STATUS=0 ===
+
+=== CASE suite=probability input=inputs/timeinput/medium_wires.txt mode=A threads=1 p=0.1 trial=1 ===
+Number of threads: 1
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/medium_wires.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=2048
+Initialization time (sec): 0.0087605030
+Computation time (sec): 9.7634731770
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 267723
+=== CASE_STATUS=0 ===
+
+=== CASE suite=probability input=inputs/timeinput/medium_wires.txt mode=A threads=8 p=0.1 trial=1 ===
+Number of threads: 8
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/medium_wires.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=2048
+Initialization time (sec): 0.0084315050
+Computation time (sec): 1.3124378750
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 267405
+=== CASE_STATUS=0 ===
+
+=== CASE suite=probability input=inputs/timeinput/medium_wires.txt mode=A threads=1 p=0.5 trial=1 ===
+Number of threads: 1
+Simulated annealing probability parameter: 0.5
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/medium_wires.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=2048
+Initialization time (sec): 0.0084333600
+Computation time (sec): 5.5128943600
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 273065
+=== CASE_STATUS=0 ===
+
+=== CASE suite=probability input=inputs/timeinput/medium_wires.txt mode=A threads=8 p=0.5 trial=1 ===
+Number of threads: 8
+Simulated annealing probability parameter: 0.5
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/medium_wires.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=2048
+Initialization time (sec): 0.0085513740
+Computation time (sec): 0.7374485670
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 273081
+=== CASE_STATUS=0 ===
+
+### 4. Required A-mode problem-size sweeps: grid size and wire count, 1/8 threads
+=== CASE suite=gridsize input=inputs/problemsize/gridsize/medium_512.txt mode=A threads=1 p=0.1 trial=1 ===
+Number of threads: 1
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/problemsize/gridsize/medium_512.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=512, dim_y=512, number of wires=2048
+Initialization time (sec): 0.0117101110
+Computation time (sec): 15.8076929130
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 5
+Total cost: 510694
+=== CASE_STATUS=0 ===
+
+=== CASE suite=gridsize input=inputs/problemsize/gridsize/medium_512.txt mode=A threads=8 p=0.1 trial=1 ===
+Number of threads: 8
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/problemsize/gridsize/medium_512.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=512, dim_y=512, number of wires=2048
+Initialization time (sec): 0.0009118900
+Computation time (sec): 2.2334907220
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 5
+Total cost: 506312
+=== CASE_STATUS=0 ===
+
+=== CASE suite=gridsize input=inputs/problemsize/gridsize/medium_2048.txt mode=A threads=1 p=0.1 trial=1 ===
+Number of threads: 1
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/problemsize/gridsize/medium_2048.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=2048
+Initialization time (sec): 0.0142731040
+Computation time (sec): 17.4466762620
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 333796
+=== CASE_STATUS=0 ===
+
+=== CASE suite=gridsize input=inputs/problemsize/gridsize/medium_2048.txt mode=A threads=8 p=0.1 trial=1 ===
+Number of threads: 8
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/problemsize/gridsize/medium_2048.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=2048
+Initialization time (sec): 0.0082099670
+Computation time (sec): 2.3865621240
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 333618
+=== CASE_STATUS=0 ===
+
+=== CASE suite=gridsize input=inputs/problemsize/gridsize/medium_8192.txt mode=A threads=1 p=0.1 trial=1 ===
+Number of threads: 1
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/problemsize/gridsize/medium_8192.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=8192, dim_y=8192, number of wires=2048
+Initialization time (sec): 0.1452175140
+Computation time (sec): 18.2691859200
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 2
+Total cost: 335361
+=== CASE_STATUS=0 ===
+
+=== CASE suite=gridsize input=inputs/problemsize/gridsize/medium_8192.txt mode=A threads=8 p=0.1 trial=1 ===
+Number of threads: 8
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/problemsize/gridsize/medium_8192.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=8192, dim_y=8192, number of wires=2048
+Initialization time (sec): 0.1385588770
+Computation time (sec): 2.7190199360
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 2
+Total cost: 335475
+=== CASE_STATUS=0 ===
+
+=== CASE suite=numwires input=inputs/problemsize/numwires/medium_2048_256.txt mode=A threads=1 p=0.1 trial=1 ===
+Number of threads: 1
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/problemsize/numwires/medium_2048_256.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=256
+Initialization time (sec): 0.0143753730
+Computation time (sec): 2.4029261420
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 2
+Total cost: 42762
+=== CASE_STATUS=0 ===
+
+=== CASE suite=numwires input=inputs/problemsize/numwires/medium_2048_256.txt mode=A threads=8 p=0.1 trial=1 ===
+Number of threads: 8
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/problemsize/numwires/medium_2048_256.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=256
+Initialization time (sec): 0.0082535540
+Computation time (sec): 0.3589333860
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 2
+Total cost: 42756
+=== CASE_STATUS=0 ===
+
+=== CASE suite=numwires input=inputs/problemsize/numwires/medium_2048_1024.txt mode=A threads=1 p=0.1 trial=1 ===
+Number of threads: 1
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/problemsize/numwires/medium_2048_1024.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=1024
+Initialization time (sec): 0.0124076950
+Computation time (sec): 9.2117977880
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 167403
+=== CASE_STATUS=0 ===
+
+=== CASE suite=numwires input=inputs/problemsize/numwires/medium_2048_1024.txt mode=A threads=8 p=0.1 trial=1 ===
+Number of threads: 8
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/problemsize/numwires/medium_2048_1024.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=1024
+Initialization time (sec): 0.0165390310
+Computation time (sec): 1.2651918110
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 167491
+=== CASE_STATUS=0 ===
+
+=== CASE suite=numwires input=inputs/problemsize/numwires/medium_2048_4096.txt mode=A threads=1 p=0.1 trial=1 ===
+Number of threads: 1
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/problemsize/numwires/medium_2048_4096.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=4096
+Initialization time (sec): 0.0176636590
+Computation time (sec): 35.5595431710
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 690303
+=== CASE_STATUS=0 ===
+
+=== CASE suite=numwires input=inputs/problemsize/numwires/medium_2048_4096.txt mode=A threads=8 p=0.1 trial=1 ===
+Number of threads: 8
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/problemsize/numwires/medium_2048_4096.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=4096
+Initialization time (sec): 0.0087275450
+Computation time (sec): 5.0191502120
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 689105
+=== CASE_STATUS=0 ===
+
+### 5. Required routing visualizations: medium, 8 threads, W and A
+=== CASE suite=visualization input=inputs/timeinput/medium_wires.txt mode=W threads=8 p=0.1 trial=1 ===
+Number of threads: 8
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/medium_wires.txt
+Parallel mode: W
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=2048
+Initialization time (sec): 0.0087488850
+Computation time (sec): 1.4490862850
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 267735
+=== CASE_STATUS=0 ===
+
+Creating image 8232x8312...
+Drawing 2048 wires...
+Saving to benchmark_results/ghc_remaining_20261008_192809/visuals/medium_W_wire_plot.png...
+=== CASE suite=visualization input=inputs/timeinput/medium_wires.txt mode=A threads=8 p=0.1 trial=1 ===
+Number of threads: 8
+Simulated annealing probability parameter: 0.1
+Simulated annealing iterations: 5
+Input file: inputs/timeinput/medium_wires.txt
+Parallel mode: A
+Batch size: 1
+Question Spec: dim_x=2048, dim_y=2048, number of wires=2048
+Initialization time (sec): 0.0084076020
+Computation time (sec): 1.4174442020
+[32mValidate Passed: no mismatches.
+[0mMax occupancy: 3
+Total cost: 267501
+=== CASE_STATUS=0 ===
+
+Creating image 8232x8312...
+Drawing 2048 wires...
+Saving to benchmark_results/ghc_remaining_20261008_192809/visuals/medium_A_wire_plot.png...
+=== COMPLETE ===
+finished: 2026-10-08T19:33:51-04:00
+log: /afs/andrew.cmu.edu/usr4/jasont2/private/15418/asst3/code/benchmark_results/ghc_remaining_20261008_192809/full.log
+visuals: /afs/andrew.cmu.edu/usr4/jasont2/private/15418/asst3/code/benchmark_results/ghc_remaining_20261008_192809/visuals

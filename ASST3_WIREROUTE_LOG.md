@@ -56,12 +56,6 @@ struct Wire {
   the original enumeration order without storing all routes
   W generates/scores candidates in parallel; A generates/scores them sequentially
   inside each worker's batch
-- **Indexed-route construction:** known indexed route shapes now write their
-  keypoints directly instead of creating an initializer list and running the
-  general duplicate-removal loop. This changes only temporary candidate
-  construction: every legal route and every candidate cell is still evaluated.
-  An exhaustive small-grid check matched the prior builder for 2,625 indexed
-  routes; GHC timing is still pending.
 - **Exact route count:** `count_routes()` supplies the loop bounds and threshold
   decision without generating any candidates first
 - **Axis-specific traversal:** cost helpers handle horizontal and vertical
@@ -216,49 +210,6 @@ above; its cause was not established.
   the precision of the winning settings
 - These are medium-input tuning decisions; rerun scalability with the selected
   settings and evaluate few/abundant before treating them as general conclusions
-
-### Step 6: Indexed Candidate Construction and Profiling
-
-On `ghc38`, profiling one-thread W mode on `medium_wires.txt` showed that the
-full per-cell scorer dominated execution, while indexed candidate construction
-was the next largest direct cost. The profile was collected with `P=0.1`, five
-iterations, and batch size 1. The program output passed validation with maximum
-occupancy 3 and cost 267723.
-
-| Function | Self samples before direct builders | Self samples after direct builders |
-| --- | ---: | ---: |
-| `calculate_wire_cost_baseline` | 84.04% | 86.05% |
-| `route_from_index` | 11.22% | 9.32% |
-
-The indexed route builder was changed to write known straight, up-to-two-bend,
-and three-bend keypoints directly instead of creating an initializer list and
-running the general adjacent-duplicate-removal loop. It preserves the exact
-candidate order and still constructs a `Wire` before the existing scorer visits
-every candidate cell. An exhaustive small-grid comparison matched the old and
-new builders for 2,625 indexed routes. This is a constant-factor construction
-optimization, not route sampling, cached scoring, prefix sums, or a range query.
-
-The following timings/counters are evidence for this experiment, but only the
-pre-change normal-run figure is a three-run median. The post-change row is one
-`perf stat`-associated run and must be repeated before claiming a final timing
-gain.
-
-| Measurement | Before | After direct builders | Notes |
-| --- | ---: | ---: | --- |
-| Computation time (s) | 9.654550274 | 9.359772501 | Before: 3-run median; after: one run |
-| Cycles | 45,695,391,504 | 44,464,339,140 | `perf stat` samples |
-| Instructions | 121,738,034,830 | 118,841,411,281 | `perf stat` samples |
-| IPC | 2.66 | 2.67 | `perf stat` samples |
-| Cache references | 504,279,391 | 465,888,206 | `perf stat` samples |
-| Cache misses | 32,704,200 (6.49%) | 28,593,236 (6.14%) | `perf stat` samples |
-| `perf` elapsed time (s) | 10.293317816 | 9.862720217 | Includes work outside the program computation timer |
-
-The profiler shift supports a real reduction in construction overhead: the
-scorer's percentage increased because less time was spent elsewhere, not because
-the scorer became slower. Since the scorer remains about 86% of self samples
-and each candidate cell must still be evaluated, further route-construction
-micro-optimizations are expected to have limited payoff. Next, collect three
-post-change normal timing runs, then retest the eight-thread W configuration.
 
 ### Tentative GHC W Performance
 
@@ -491,19 +442,15 @@ Batch-size tuning should be reported separately from that fixed-parameter baseli
 
 ## Potential Improvements
 
-1. Measure the new one-thread W sequential fast path on GHC. It bypasses the
-   per-wire OpenMP region when `-n 1`, while retaining the existing thresholded
-   candidate parallelism for `-n >= 2`. Validate equivalent output and report
-   the before/after median; no timing claim has been made yet.
-2. Consider a persistent parallel region for W to reduce repeated team-entry overhead
+1. Consider a persistent parallel region for W to reduce repeated team-entry overhead
    A already uses one region across all iterations
    Preserve barriers around occupancy updates and per-wire result reduction
-3. Measure route counts, sequential/parallel frequency, scoring/update time,
+2. Measure route counts, sequential/parallel frequency, scoring/update time,
    and cache misses to identify the remaining bottleneck
-4. Consider flat storage for each occupancy view to remove vector indirection
+3. Consider flat storage for each occupancy view to remove vector indirection
    Preserve output/checker compatibility and measure whether it actually helps
-5. Add deterministic candidate-index tie-breaking for more controlled comparisons
-6. Evaluate across-wires batch size, lock granularity, and locality-aware ordering
+4. Add deterministic candidate-index tie-breaking for more controlled comparisons
+5. Evaluate across-wires batch size, lock granularity, and locality-aware ordering
    after validating and measuring the new parallel baseline
 
 ## Next Steps
@@ -512,48 +459,6 @@ Batch-size tuning should be reported separately from that fixed-parameter baseli
 2. Measure and tune A scheduling, batch size, and chunk size one at a time
 3. Confirm tentative W measurement settings and repeat counts before finalizing
 4. Complete GHC graphs/cache measurements, routing images, A sensitivity, and PSC work
-
-### Pending A-Mode Scorer Refinements (2026-10-08)
-
-The local source now includes two semantics-preserving A-mode refinements that
-need a GHC build, validation, and three-run median comparison against the
-preceding source:
-
-1. A-mode candidate generation uses the existing direct route builders rather
-   than `make_wire_from_points`. This preserves candidate order and keypoints
-   while avoiding initializer-list construction and generic adjacent-duplicate
-   removal.
-2. Each greedy wire search normalizes its current route's at-most-four segments
-   once. Candidate segments reuse those descriptors during overlap detection
-   instead of repeatedly deriving the old route's orientation and interval
-   endpoints. The candidate and current route have the same final endpoint, so
-   its old-route membership is known without a separate scan.
-
-Both changes still score every legal candidate and every cell on it, and retain
-atomic occupancy reads. A local sequential fallback build validated `few` A
-mode with `Validate Passed: no mismatches`; the local macOS compiler cannot
-compile the project's OpenMP configuration. Do not claim a speedup until GHC
-results are recorded.
-
-#### GHC Result: medium A, 8 threads, `B=1`
-
-On `ghc39`, after rebuilding the refinement source, three runs with
-`-f inputs/timeinput/medium_wires.txt -n 8 -p 0.1 -i 5 -m A -b 1` all
-validated successfully:
-
-| Run | Computation time (s) | Total cost |
-| --- | ---: | ---: |
-| 1 | 1.2902631510 | 267697 |
-| 2 | 1.2929037720 | 267429 |
-| 3 | 1.2887609460 | 267459 |
-
-Median computation time: **1.2902631510 s**. The run-to-run range is
-0.004142826 s (0.32% of the median). Cost variation is expected in A mode
-because concurrent scheduling and per-thread random streams vary.
-
-The earlier same-host A result was one `perf record` run at 1.3904499920 s;
-because sampling profiling has overhead and it was not a matched three-run
-baseline, do not report a precise before/after percentage from that comparison.
 
 The roadmap has been refreshed to match the implemented indexed W search,
 dual occupancy views, completed W tuning, and batched atomic A baseline.
