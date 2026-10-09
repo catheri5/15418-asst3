@@ -16,336 +16,224 @@
 \begin{document}
 \maketitle
 
+\section{Shared Baseline and Optimizations}
+\label{sec:shared}
 
-\section{Implementation Status}
+\subsection{Exhaustive route generation and cost calculation}
 
-We first implemented a sequential correctness baseline before adding OpenMP
-parallelism.  The starter code's compressed route representation was replaced
-with a keypoint representation: each wire stores up to five points, corresponding
-to the start point, up to three bends, and the end point.  This matches the
-assignment checker format and makes route construction and validation easier to
-reason about.
+We generate routes from an index instead of storing every possible route in a
+vector. The index tells \texttt{route\_from\_index()} where to place the bends.
+We construct one route, score it, and discard it unless it is the best so far.
+This reduces allocation and memory traffic while still checking every legal
+route.
 
-At the start of timed computation, each input wire is assigned a simple legal route.  If the
-endpoints share a row or column, the initial route is straight.  Otherwise, the
-initial route is a horizontal-first one-bend path.  The occupancy matrix is then
-constructed by adding each initial wire route.
+\subsection{Shared locality and construction optimizations}
 
-The sequential correctness baseline visits every wire for each iteration.
-For a wire being reconsidered, the current route is first removed from the
-occupancy matrix.  With fixed probability $P$, the program chooses a legal route
-uniformly at random.  Otherwise, it evaluates every legal route with at most
-three bends using the sum of squared occupancy values that would result from
-adding the wire back, and chooses the lowest-cost route.  The existing route is
-preserved unless a strictly cheaper candidate is found.  The selected route is
-then added back into the occupancy matrix.
+Both modes use the following constant-factor optimizations:
 
-\section{Route Generation and Cost Calculation}
-
-For non-collinear endpoints, route generation currently includes horizontal-first
-and vertical-first routes with at most two bends, plus exactly three-bend routes
-through each strictly interior point in the endpoint bounding box.  Choosing
-strictly interior points for the three-bend case prevents those routes from
-collapsing into duplicate one- or two-bend routes.  Some at-most-two-bend routes
-do collapse to one-bend routes; consecutive duplicate keypoints are removed when
-constructing the wire.
-
-Within-wires scoring removes the current wire before evaluating its candidates.
-Therefore each occupied cell on a W-mode candidate is scored using
-$(occupancy[y][x] + 1)^2$. Across-wires cannot generally remove the current
-wire during selection: another worker may be reading that occupancy cell while
-the current batch is still being scored. A-mode instead leaves the old route in
-the matrices, recognizes where a candidate overlaps it, and scores an
-overlapping cell as $occupancy[y][x]^2$ because the old wire's removal and the
-candidate's insertion cancel. Non-overlapping cells still use
-$(occupancy[y][x] + 1)^2$. Section~\ref{sec:final-decisions} describes the
-resulting synchronization and geometry decisions in more detail.
-
-\section{Sequential Baseline Optimization}
-
-Table~\ref{tab:baseline-progress} summarizes the historical computation
-checkpoints on GHC for \texttt{few\_wires.txt}, one thread, $P=0.1$,
-five iterations, and batch size one. The early W-mode measurement provides
-context; the subsequent optimizations were first tested in the sequential
-A-mode baseline before being ported to W.
-
-\begin{table}[!htbp]
-\centering
-\small
-\begin{tabular}{@{}p{0.54\linewidth} c r@{}}
-\toprule
-Implementation checkpoint & Mode & Compute (s) \\
-\midrule
-Early vector-based candidate search & W & 6.14 \\
-Generate and score immediately, without a candidate vector & A & $\approx 5.89$ \\
-Also specialize horizontal/vertical cost loops & A & 3.17 \\
-Also maintain a contiguous column occupancy view & A & $\approx 2.68$ \\
-\bottomrule
-\end{tabular}
-\caption{Exploratory baseline progression, with times shown to three significant
-figures. The 5.89 s and 2.68 s values were reported approximately. The 3.17 s
-value is a representative run, with a reported median of approximately 3.15 s.}
-\label{tab:baseline-progress}
-\end{table}
-
-The recorded stages matter: eliminating the route vector alone left the
-A-mode baseline near 5.89 seconds, rather than immediately reaching 3.17.
-That larger reduction followed the axis-specific scoring loop; contiguous
-vertical access then reduced the reported time to about 2.68 seconds.
-From the 5.89-second A-mode checkpoint to 2.68 seconds, computation time
-fell by approximately 54.5\% (about $2.20\times$ speedup).
-These historical checkpoints were not all collected as a controlled
-median-of-three comparison, and W and A use different search paths, so we
-treat them as evidence of progress rather than a final benchmark comparison.
-
-Before further within-wires tuning, we focused on the efficiency of the
-one-thread baseline. Originally, we stored all candidate routes in a vector
-before scoring them. We changed the sequential search to construct and fully
-score each candidate immediately, keeping only the current candidate and best
-route. This removes candidate-vector allocation, growth, and storage overhead
-without changing the exhaustive route set. The random branch constructs just
-the uniformly selected route without building the candidate list.
-
-We also specialized the cost loop for horizontal and vertical segments.
-Horizontal scoring fixes a row and changes only the column index; vertical
-scoring fixes a column and changes only the row index. Initially, vertical
-access still crossed separately allocated rows. We subsequently added a
-transposed raw occupancy view, \texttt{occupancy\_columns[x][y]}, alongside
-\texttt{occupancy[y][x]}. Horizontal segments now read contiguous rows and
-vertical segments read contiguous columns. Every wire removal and insertion
-updates both views. This trades additional memory and update work for better
-locality during the many candidate-scoring reads.
-
-The transposed view is not a prefix-sum table or a cache of route costs.
-Every candidate is still evaluated completely, without cost reuse or early
-termination, and bends and the final endpoint are counted exactly once.
-The optimized traversal is now used by both modes. Both use indexed generation:
-A generates candidates sequentially within a batch, while W distributes
-candidate generation and scoring across threads as described below.
+\begin{itemize}
+\item \textbf{Indexed route generation.} We generate one route from its index,
+score it, and then move to the next index. This avoids allocating and storing
+every candidate route at once.
+\item \textbf{Horizontal and vertical scoring loops.} We use separate loops for
+horizontal and vertical segments instead of checking a segment's direction for
+every cell. This is a small optimization that saves on some checks in the inner most loop.
+\item \textbf{Transposed and Normal Occupancy.} \texttt{occupancy[y][x]} makes
+and \texttt{occupancy\_columns[x][y]} make horizontal and vertical pieces contiguous in memory.
+This reduces cache misses since you can load entire lines in the direction that you are traversing.
+\end{itemize}
 
 \FloatBarrier
-\section{Within-Wires Parallelism}
+\section{Within-Wires: Design and Performance Debugging Journey}
+\label{sec:within}
 
-We keep iterations and the outer loop over wires sequential. After removing
-the current wire from both occupancy views, all candidates for that wire can
-be evaluated independently against the same read-only occupancy state. The
-chosen route is committed before moving to the next wire.
+\subsection{Implemented optimizations and final parallelization}
 
-Our initial parallel implementation generated a candidate vector sequentially
-and parallelized only scoring. The current implementation instead maps an
-integer route index to one candidate with \texttt{route\_from\_index()}.
-Each worker constructs and scores its assigned candidates immediately, so
-candidate generation is also parallel and the full route vector is no longer
-stored. The exact candidate count is available without constructing routes:
-for non-collinear endpoints it is
-\[
-N_{\mathrm{routes}} = d_x + d_y + 2(d_x-1)(d_y-1),
-\]
-where $d_x$ and $d_y$ are absolute endpoint differences. Collinear endpoints
-have one candidate. This preserves a route-count-based sequential fallback.
+W mode keeps annealing iterations and the outer wire loop sequential. For one
+wire, it removes the old route, evaluates legal candidates in parallel, reduces
+the workers' best routes, and commits one winning route. The implemented
+optimizations are:
 
-Each thread maintains a private best route and cost. At the end of the parallel
-search, the main thread combines the per-thread results. This is a manual
-minimum reduction, analogous to accumulating partial sums independently and
-combining them once, rather than synchronizing after every candidate.
+\begin{itemize}
+\item \textbf{Potential wire position per thread} One complete candidate route is the
+unit of parallel work; candidates for the same removed wire are independent.
+\item \textbf{No candidate vector.} At first, the code generated every route into a vector
+and parallelized only scoring. The final code constructs, scores, and discards
+one candidate at a time, eliminating large temporary storage.
+\item \textbf{Indexed direct construction.} A route index determines its bend
+pattern. Workers therefore construct and score their own candidates, rather
+than waiting for one thread to build all routes.
+\item \textbf{Exact route counts and random-route construction.}
+\texttt{count\_routes()} determines loop bounds and the fallback decision
+without materializing routes; the random branch constructs only its selected
+route.
+\item \textbf{Private bests and reusable buffers.} Each worker tracks a private
+best cost and route, then writes one result into storage allocated once outside
+the wire loop. This means we only have to synchronize at the end.
+\item \textbf{Thresholded static scheduling.} Searches with fewer than four
+candidates per requested thread run sequentially. Larger searches use
+\texttt{schedule(static,1)}, assigning complete candidate routes cyclically.
+\item \textbf{Direction-specific scoring and two occupancy views.} The shared
+horizontal/vertical loops and row-major/transposed occupancy arrays make scans
+contiguous in the direction being traversed.
+\end{itemize}
 
-\subsection{Tuning Methodology and Decisions}
+\subsection{Synchronization and correctness}
 
-For early within-wires tuning, we temporarily measured only the iterative
-rerouting phase, excluding initial route placement and occupancy initialization.
-This narrower timing made it easier to isolate the effect of scheduling, chunk
-size, and threshold choices. Those older implementation measurements are not
-used for the current choices below. Current measurements use the assignment
-timing definition, where computation includes initial route placement and
-occupancy filling.
+During one candidate search, workers only read occupancy; the current wire was
+removed before the search, so each candidate cell uses
+$(occupancy[y][x]+1)^2$. Workers write only their own private best route and
+cost. The worksharing loop has one barrier, followed by one reduction. Removing
+and inserting occupancy is sequential between wires. This avoids per-candidate
+locks, atomics, and critical sections.
 
-For the current sweeps, we used \texttt{medium\_wires.txt}, eight threads,
-$P=0.1$, five iterations, and batch size one. Each computation time is the
-median of three runs per configuration, with one knob varied at a time.
-All supplied sweep outputs passed validation and had maximum occupancy three.
+\subsection{Optimization Decision Making and Tradeoffs}
 
-Table~\ref{tab:ww-tuning} collects the three sweeps. Bold settings are the
-selected choices; differences within each sweep were small.
+We tested scheduling and granularity on medium input at eight threads. Static
+scheduling measured 1.5045~s versus 1.5355~s for dynamic scheduling. With
+static scheduling, chunk one measured 1.4862~s versus 1.5134~s for chunk four;
+the differences were small, but favored inexpensive candidate-level static
+scheduling. We therefore retained static, chunk-one scheduling and the
+small-search fallback rather than adding a dynamic task queue.
 
-\begin{table}[!htbp]
-\centering
-\small
-\begin{tabular}{@{}l l r r@{}}
-\toprule
-Sweep & Setting & Compute median (s) & Cost \\
-\midrule
-Schedule & \textbf{static} & 1.504505 & 267645 \\
-         & dynamic & 1.535503 & 267681 \\
-\midrule
-Chunk size & \textbf{1} & 1.486193 & 267735 \\
-           & 4 & 1.513441 & 267641 \\
-           & 8 & 1.509649 & 267645 \\
-           & 16 & 1.499131 & 267423 \\
-           & 32 & 1.502043 & 267425 \\
-\midrule
-Threshold multiplier & 2 & 1.517222 & 267735 \\
-                     & \textbf{4} & 1.486254 & 267735 \\
-                     & 8 & 1.488452$^{*}$ & 267735 \\
-                     & 16 & 1.489102 & 267735 \\
-                     & 32 & 1.506372 & 267735 \\
-\bottomrule
-\end{tabular}
-\caption{Medium-input tuning on GHC at eight threads. Schedule sweep:
-chunk 8, multiplier 4. Chunk sweep: static, multiplier 4.
-Threshold sweep: static, chunk 1. All supplied outputs passed validation.
-$^{*}$The multiplier-8 time is a supplied correction to the earlier recorded
-value, not a median recomputed from raw runs.}
-\label{tab:ww-tuning}
-\end{table}
+The verified final GHC results in Table 7 and
+Figure 2 show W eight-thread computation speedups of
+$7.70\times$, $7.20\times$, and $5.95\times$ on few, medium, and abundant
+inputs. The shared indexed construction and dual occupancy views reduce
+allocation traffic and improve horizontal and vertical scan locality.
 
-We kept static scheduling, which used about 2\% less computation time than
-dynamic. Static avoids dynamic work-dispatch overhead, but this modest
-difference does not isolate overhead as the cause. Chunk one had the lowest
-median, about 1.6\% below chunk eight; the full chunk sweep spanned only
-about 1.8\%. These results support a provisional configuration, not a claim
-that scheduling or chunk size dominates performance.
+\subsection{Limitations against Perfect Speedup}
 
-\paragraph{Fine granularity.}
-In \texttt{schedule(static, 1)}, a chunk is one candidate route, not one cell.
-Candidates are assigned round-robin without a dynamic task queue. A candidate
-still performs a complete path evaluation, so a small chunk does not imply
-that each scheduled unit contains only a trivial amount of work.
+W exposes candidates for only one wire at a time. Some wires have too few
+candidates to keep all 128 workers busy, and every wire requires a barrier,
+reduction, and sequential occupancy update before the next search starts, 
+causing large synchronization overhead if the space of possible wires is small 
+compared to amount of wires.
+Data movement is a contributing cost, but it is not by itself a complete
+explanation for the W-mode limit.  On GHC, total W cache misses do rise as
+threads are added: the medium case rises from 27.48 million at one thread to
+33.35 million at eight, and the abundant case from 114.05 million to 135.90
+million.  This is evidence of additional cache and memory pressure.  However,
+even with ideal cache behavior, W would still expose only one wire's candidates
+at a time and would still pay one barrier, reduction, and serial occupancy
+update per wire.  Those structural costs set a concurrency limit independently
+of data movement; data movement amplifies it rather than replacing it as an
+explanation.
 
-Importantly, all generated candidates for a particular wire have the same
-Manhattan length, $d_x+d_y$, and visit the same number of cells.
-Path lengths vary between wires, but the W-mode parallel loop processes only
-one wire's candidates at a time. Therefore, the chunk-one result cannot be
-explained by balancing different wire lengths. Candidate orientations, bend
-counts, and memory access patterns can differ even with equal path length;
-a fine cyclic assignment may distribute those differences, but these effects
-were not separately measured. The timing data justify choosing chunk one
-provisionally, not a general claim that finer granularity is always better.
+We also considered splitting one candidate route's cell score across several
+workers, or parallelizing the final reduction of per-worker best routes. We
+rejected both as too fine grained. The existing design already distributes
+whole candidate routes across up to 128 workers. A second level of parallelism
+would require reductions and extra barriers for every candidate, while the
+final reduction itself has at most 127 comparisons at 128 threads. That
+synchronization overhead is much larger than the small amount of work it could
+remove.
 
-The parallel threshold is the multiplier times the thread count: the tested
-values correspond to 16, 32, 64, 128, and 256 candidates at eight threads.
-We retained multiplier four; the corrected medians for 4, 8, and 16 differed
-by only about 0.2\%. The sequential fallback avoids entering a parallel region
-for very small searches, but this sweep does not establish an exact optimal
-cutoff or how frequently each threshold changes the execution path.
-
-Our selected configuration is therefore static scheduling, chunk size one,
-and threshold multiplier four. These decisions are based on medium-input
-measurements and must still be checked on few and abundant inputs and in
-the final scaling evaluation.
+On GHC, W improves monotonically through eight threads; there is no measured
+drop-off in that range. On PSC, however, W eventually plateaus or regresses at
+high thread counts. We attribute that behavior to the combination of the
+one-wire-at-a-time work limit and repeated synchronization, with the observed
+cache/memory pressure making the plateau worse once each wire has too little
+candidate work to amortize the overhead.
 
 \FloatBarrier
-\subsection{Synchronization and Shared Memory}
 
-Threads share both occupancy views, but only read them during candidate scoring,
-so no occupancy locks are needed in W mode. Multiple threads reading the same
-cache line do not cause write-induced coherence invalidations and may benefit
-from shared cache reuse. This is distinct from false sharing, which requires
-writes to a shared cache line; our local bests remain private throughout scoring.
-Actual cache benefits depend on working-set size and scheduling and have not
-yet been quantified with cache-miss measurements.
+\section{Across-Wires: Design and Performance Debugging Journey}
+\label{sec:across}
 
-The worksharing loop has an implicit barrier. Each worker then publishes its
-local best to its own result slot, and the parallel-region end synchronizes
-completion before the main thread reduces those results. Occupancy removal
-and insertion remain sequential, outside the parallel region. Thus no critical
-section or atomic update is needed for each candidate comparison.
+\subsection{Implemented optimizations and final parallelization}
 
-We moved the per-thread result-vector allocations outside the iteration and
-wire loops, reusing storage across searches. Before each parallel search,
-cost slots reset to the current wire's starting best; active threads overwrite
-their route slots. Unused slots cannot select stale routes because the final
-reduction accepts only strictly cheaper costs. Buffer reuse showed no
-measurable computation-time improvement, so we retain it as a simple allocation
-cleanup rather than attributing a speedup to it.
+A mode uses persistent threads instead of restarting them for every annealing
+iteration. In an iteration, a worker repeatedly claims one batch of wires. It
+first selects a replacement route for every wire in that batch, without changing
+occupancy. It then commits all changed wires in that batch by atomically
+removing each old route and atomically inserting its replacement. Different
+batches can be selected and committed concurrently. The worksharing barrier at
+the end of the iteration ensures every batch has committed before selection for
+the next iteration begins. Unlike W mode, a worker leaves a wire's old route in
+occupancy while selecting its replacement, because another worker may be
+scoring that same occupancy cell. The implemented optimizations are:
 
-Equal-cost route choices can differ across thread counts and schedules because
-the reduction does not impose a deterministic candidate-index tie-break.
-Those choices can affect later wires and explain different final costs without
-an occupancy mismatch. Consequently, some tuning runs follow different routing
-trajectories rather than exactly identical work.
+\begin{itemize}
+\item \textbf{Batch of wires per worker.} A whole batch is the unit of
+parallel work. Dynamic scheduling assigns the next unclaimed batch to the next
+available worker, which helps when wires have different candidate counts.
+\item \textbf{Persistent threads.} Threads are created once rather than once
+per annealing iteration. This avoids repeatedly creating and destroying OpenMP
+workers.
+\item \textbf{Private random state and reusable route updates.} Each worker
+has its own random-number generator and remembers its chosen routes in a
+reusable private buffer. The random generator performs annealing's
+probabilistic candidate choice; keeping it private avoids a shared-state lock
+and repeated allocation while scoring a batch.
+\item \textbf{Atomic occupancy accesses.} Workers atomically read both
+occupancy views while scoring and atomically decrement/increment them when
+committing routes. These operations prevent C++ data races while allowing
+separate batches to make progress concurrently.
+\item \textbf{Overlap intervals instead of per-cell route membership tests.}
+The first A scorer called \texttt{cell\_on\_wire()} at every candidate cell to
+find whether it overlapped the old route. The final scorer computes the small
+set of segment-overlap ranges once, then scores contiguous overlapping and
+non-overlapping spans directly.
+\item \textbf{Correct overlap scoring.} A candidate cell shared with the old
+route uses $value^2$, since removing the old route and adding the candidate
+cancel. All other cells use $(value+1)^2$. The interval representation applies
+this required A-mode rule without changing the cost function.
+\item \textbf{Direction-specific scoring and two occupancy views.} The shared
+horizontal/vertical loops use the row-major and transposed matrices so that
+each segment is traversed contiguously in its own direction.
+\end{itemize}
 
-\subsection{Scaling Limits}
+\subsection{Synchronization and correctness}
 
-Table~\ref{tab:ww-initial-scaling} shows the initial current-implementation
-medium snapshot, using static chunk eight and multiplier four.
-This is a preliminary checkpoint, not the final evaluation of the selected
-chunk-one configuration.
+The OpenMP worksharing loop has an implicit barrier at the end of each
+iteration. That is the synchronization point separating one iteration's batch
+commits from the next iteration's route selection; no global lock or critical
+section is used around the complete scoring loop. While a worker scores every
+candidate cell, it uses an atomic read from the appropriate occupancy view,
+because another worker may be committing a different batch at the same time.
+After choosing every wire in its batch, the worker commits each change with
+atomic updates: it decrements every cell of the old route and increments every
+cell of the replacement route in both the row-major and transposed occupancy
+views. The atomics prevent data races, but they do not make the many reads of
+one candidate route into one globally consistent snapshot.
 
-\begin{table}[!htbp]
-\centering
-\small
-\begin{tabular}{@{}r r r r r@{}}
-\toprule
-Threads & Compute (s) & Compute speedup & Total speedup & Efficiency \\
-\midrule
-1 & 9.511255 & $1.00\times$ & $1.00\times$ & 100.0\% \\
-2 & 4.941826 & $1.92\times$ & $1.92\times$ & 96.2\% \\
-4 & 2.664504 & $3.57\times$ & $3.53\times$ & 89.2\% \\
-8 & 1.506321 & $6.31\times$ & $6.17\times$ & 78.9\% \\
-\bottomrule
-\end{tabular}
-\caption{Initial medium-input scalability medians on GHC with $P=0.1$,
-five iterations, and batch size one. Speedups use this implementation's
-one-thread baseline; efficiency uses computation speedup.
-Total time is initialization plus computation. All outputs passed validation.}
-\label{tab:ww-initial-scaling}
-\end{table}
+We determine overlaps between each candidate segment and the old wire before
+visiting that segment's cells. The scorer walks non-overlapping spans using $(value+1)^2$ and overlapping
+spans using $value^2$, where removing the old wire and adding the candidate
+cancel. This replaces a segment scan at every cell with a small fixed-size
+range calculation per segment. 
+\subsection{Optimization Decision Making and Tradeoffs}
 
-Eight-thread computation speedup was $6.31\times$, with approximately 79\%
-efficiency. The gains are substantial but diminish as threads are added.
+An early one-thread A-mode run was much slower than W mode on the same input.
+Since that was a one-thread observation, it pointed to per-candidate scoring
+work rather than lock contention or a poor distribution of batches. We used
+that observation to prioritize the following decisions.
 
-We do not expect perfect speedup. Initial route placement, occupancy updates,
-random-route choices, and the final per-wire reduction remain sequential.
-Many searches also enter separate parallel regions and barriers. Small searches
-offer limited candidate-level parallelism, and occupancy reads can be constrained
-by cache behavior or memory bandwidth. Candidate generation is now parallel
-on the parallel path, so sequential full-vector generation is no longer a
-remaining bottleneck in that path. Profiling is needed to distinguish the
-remaining synchronization, memory, and sequential-work costs.
-
-We observed improving performance, not a drop-off, from one through eight
-threads in the initial snapshot. Efficiency declined as thread count increased.
-At higher counts, limited candidates per wire, synchronization overhead, and
-memory-system pressure may flatten or reverse scaling, but this remains a
-hypothesis to test in the PSC experiments.
-
-\FloatBarrier
-\section{Across-Wires Parallelism}
-
-Our initial A-mode baseline assigns batches of wires to workers using dynamic
-scheduling. Each worker explores its batch's wires sequentially, remembers all
-chosen routes, and only then commits the batch's removals and insertions.
-One parallel region spans all iterations, with a barrier between iterations.
-Workers have private random generators and reusable batch-route storage.
-
-Unlike W mode, A cannot remove a wire before its batch finishes selecting
-routes. The initial scorer therefore read each cell atomically and subtracted
-one when \texttt{cell\_on\_wire()} found that cell on the current route:
-$(value-onOldRoute+1)^2$. That helper scanned up to four old segments for
-every cell of every candidate. Atomic increment/decrement updates protect both
-occupancy views; atomic reads permit concurrent scoring without a C++ data race.
-They do not provide a consistent whole-route snapshot, which the assignment
-does not require.
-
-\subsection{Isolating the Initial Scoring Overhead}
-
-The first reported one-thread few-input A computation time was approximately
-15 seconds, compared with W's 2.82 seconds on the same input. This was an
-exploratory symptom rather than a controlled median-of-three benchmark.
-Because the discrepancy occurred at one thread, cross-worker update contention
-and work imbalance could not explain it. Extracting the mode implementations
-into separate functions improved organization but did not remove the per-cell
-membership checks; we therefore investigated the scoring loop before tuning
-scheduling or batch size.
-
-We used a temporary local scoring-only test over the 2,977,130 candidates from
-the initial few-input wire configuration. It compared W-style scoring,
-the same scorer with atomic reads, and A's atomic reads plus membership checks.
-All variants used equivalent effective occupancy and produced matching cost
-checksums. Each candidate was scored fully. The test used optimized local
-Clang compilation and medians of three runs, without an OpenMP worker team.
-It excluded rerouting iterations, random choices, commit time, and
-parallel scheduling, so these are not GHC full-program performance results.
+\begin{itemize}
+\item \textbf{Overlap intervals.} The original scorer checked whether every
+candidate cell lay on the old route. We replaced that repeated geometric work
+with a constant-size overlap calculation per candidate segment. The
+scoring-only diagnostic below was the direct evidence for this change.
+\item \textbf{Dynamic, one-wire batches.} Wires whose endpoints are farther
+apart have more candidate routes to consider, so a dynamic work queue avoids
+leaving a worker with a long wire while others are idle. We retained batch size one because larger
+batches defer each wire's update and did not provide a robust performance
+benefit in our experiments. A guided-scheduling trial was also within normal
+run-to-run variation, so we kept the simpler dynamic policy.
+\item \textbf{Persistent workers, private RNGs, and reusable update buffers.}
+These choices remove repeated thread startup, shared random-state locking, and
+per-batch allocations. They are low-risk overhead reductions that do not alter
+the candidate set or the A-mode update semantics.
+\item \textbf{Atomic accesses remain enabled.} Atomics are required while
+independent batches can score and commit concurrently. We tried a special
+single-thread path without them, but the measured cycle improvement was only
+about 1.5\%; we reverted that extra code rather than complicating the final
+implementation.
+\item \textbf{Two directional occupancy views.} The scorer dominates A-mode
+runtime, so keeping horizontal and vertical scans contiguous is worthwhile even
+though each commit must update both views.
+\end{itemize}
 
 \begin{table}[!htbp]
 \centering
@@ -361,204 +249,50 @@ Updated A: atomic reads and segment overlap ranges & 0.428 \\
 \bottomrule
 \end{tabular}
 \caption{Scoring-only diagnostic on identical initial few-input candidates.
-The first three variants isolate the original overhead; the last row is a
-separate three-run check after the change. All cost checksums matched.
-These timings are not assignment benchmark times.}
+All cost checksums matched. These timings isolate the scorer and are not
+full-program assignment benchmark times.}
 \label{tab:across-scoring-isolation}
 \end{table}
-
-Table~\ref{tab:across-scoring-isolation} showed overhead both from the
-atomic-read variant and from adding per-cell geometric checks.
-The atomic comparison includes compiler optimization effects, not just the
-cost of a hardware atomic instruction. The test supported targeting the
-inner-loop work, without establishing how much of the reported GHC time
-each factor contributed.
-
-\subsection{Moving Geometric Checks Out of the Cell Loop}
-
-We now determine overlaps between each candidate segment and the old wire
-before visiting that segment's cells. Parallel segments yield overlap intervals;
-perpendicular crossings yield single-cell intervals. These ranges are clipped
-to the candidate's half-open traversal bounds, sorted, and merged so shared
-bends are not subtracted twice.
-
-The scorer then walks non-overlapping spans using $(value+1)^2$ and overlapping
-spans using $value^2$, where removing the old wire and adding the candidate
-cancel. This replaces a segment scan at every cell with a small fixed-size
-range calculation per segment. Every cell is still read atomically and
-evaluated once, and the final endpoint is included separately.
-Only geometric overlap metadata is computed: there are no cached costs,
-prefix sums, skipped candidates, or early termination.
-
-The updated scorer's local median was 0.428 seconds versus 1.63 seconds
-for the initial A scorer, approximately a $3.80\times$ scoring-only improvement
-across the two measurement sets. This is encouraging but not a prediction of
-the full-program speedup. Cost-reference tests, before/after output comparisons,
-and atomic-update stress checks passed; a matching GHC before/after benchmark
-and full OpenMP validation remain to be collected. Batch selection/update timing,
-random selection, scheduling, and W mode are unchanged.
+\FloatBarrier
 
 \FloatBarrier
 
-\section{Optimization Hypotheses}
+\subsection{Limitations against Perfect Speedup}
 
-The main performance themes we plan to evaluate are workload balance,
-scheduling overhead, locality, and contention.  Within-wires parallelism exposes
-candidate routes as independent tasks; this should work best for wires with large
-bounding boxes and many possible routes.  Across-wires parallelism exposes wires
-or batches of wires as tasks; this may require dynamic scheduling or
-longest-task-first ordering to avoid stragglers.
+A mode has more available parallel work than W mode, but it still cannot achieve
+perfect $P\times$ speedup. Wires whose endpoints are farther apart have more
+candidate routes to consider, which creates unequal workloads. Dynamic scheduling reduces that
+imbalance, but each one-wire batch still incurs scheduling overhead and the last
+few long wires can leave workers idle. At sufficiently high thread counts there
+are also simply too few independent wire batches: the few-input case has only
+128 wires, so its PSC A-mode curve levels off around 32 threads.
 
-We will also consider locality-aware across-wires batching as a later experiment.
-For example, wires could be grouped by bounding-box midpoint or quadrant so that
-threads tend to work on nearby occupancy cells.  This may improve cache locality,
-but it may also increase contention because nearby wires are more likely to
-overlap.  We will only pursue this direction if cache miss or synchronization
-measurements suggest that the extra work is justified.
+The other limit is shared occupancy traffic. Every candidate-cell score performs
+an atomic read, and every accepted route performs atomic decrements and
+increments in both occupancy views. When concurrent routes touch nearby cells,
+these operations create cache-coherence and memory-bandwidth traffic; the
+transposed view improves scan locality but cannot remove that sharing. The final
+GHC eight-thread A-mode speedups of $7.35\times$, $6.88\times$, and
+$6.40\times$ for few, medium, and abundant inputs reflect this combination of
+remaining imbalance, dynamic-scheduling overhead, and atomic/data-movement
+costs. PSC shows that medium and abundant inputs have enough wire-level work to
+scale much farther, but total speedup still falls below computation speedup once
+serial initialization becomes noticeable.
 
 \FloatBarrier
-\section{Final Implementation Decisions and PSC Evaluation}
-\label{sec:final-decisions}
+\newcommand{\PSCResults}{%
+We benchmarked on a dedicated Bridges-2 Regular-Memory node. For each of the
+three inputs and both routing modes, we ran three trials at 1, 2, 4, 8, 16,
+32, 64, and 128 threads: $3 \times 2 \times 8 \times 3 = 144$ runs total.
+Every run used $P=0.1$, five annealing iterations, and $B=1$. We recorded the
+reported initialization and computation times, and calculated total time as their
+sum.
 
-This section records the final implementation used for the completed PSC
-benchmark set. It is intentionally detailed so that the design can be audited
-against the assignment rules and so that individual optimizations can be
-separated from algorithmic changes. The benchmark source commit was
-\texttt{70c112e}; later experiments with a single-thread A-mode fast path and
-guided A-mode scheduling were reverted because neither provided a robust final
-improvement. Thus the final routing code matches the code used for the PSC
-measurements below.
-
-\subsection{Final decisions, rationale, and synchronization}
-
-\paragraph{Exhaustive route set and direct construction.}
-For every greedy reroute, both modes enumerate the complete assignment-defined
-set of legal routes with at most three bends. We do not sample a subset, cache
-route costs, use prefix sums, or terminate a score early. The optimization is
-only representational: the old implementation materialized all candidate
-\texttt{Wire} objects in a vector, while the final implementation maps a route
-index directly to its keypoints and immediately scores it. This reduces
-allocation and temporary storage traffic without changing the route set or the
-score of any candidate. In W mode the route index is the unit of parallel work;
-in A mode one worker generates and scores routes serially for each wire in its
-assigned batch.
-
-\paragraph{Two occupancy views for spatial locality.}
-The row-major matrix \texttt{occupancy[y][x]} makes a horizontal segment scan
-contiguous. A transposed matrix \texttt{occupancy\_columns[x][y]} makes the
-corresponding vertical scan contiguous. Every route insertion/removal updates
-both views, so they represent identical logical occupancy. This deliberately
-trades a small amount of write work and memory for locality in the dominant
-operation: the many full candidate-score scans. It is not a range-query data
-structure; every candidate still reads every one of its cells. The decision was
-motivated by profiling and the observation that the scorer dominated runtime,
-while the transpose makes the vertical case match the horizontal case's
-unit-stride access pattern.
-
-\paragraph{W-mode parallel candidate search.}
-Within-wires parallelism preserves the original dependency order across wires:
-the program removes one wire, evaluates all of that wire's candidates in
-parallel against a read-only occupancy state, selects one best route, commits
-it, and only then advances to the next wire. The per-wire candidate loop uses
-\texttt{schedule(static,1)}. Each worker retains a private best route/cost,
-then the thread that resumes after the parallel region performs a reduction.
-The implicit barrier at the end of the worksharing loop and the end of the
-parallel region guarantee that every local best is complete before the reduction
-and subsequent occupancy update. Occupancy updates are therefore sequential in
-W mode; no atomic operations or locks are required during scoring.
-
-Static scheduling, chunk size one, and a candidate-count threshold of four
-times the requested thread count were selected from medium-input GHC sweeps.
-The threshold keeps small searches sequential, avoiding the cost of forming a
-parallel team when there is too little candidate work to amortize it. Static
-chunk-one scheduling was slightly faster than dynamic scheduling in the sweep;
-the differences were modest, so we describe this as a measured configuration
-choice rather than a general scheduling law. The PSC curves later show the
-expected limit of this approach: there is only one wire's candidate set
-available at a time, so high core counts can run out of useful work or pay
-disproportionately for barriers and reductions.
-
-\paragraph{A-mode batch selection and atomic commit.}
-Across-wires parallelism exposes batches of wires as the independent units.
-One OpenMP parallel region spans all simulated-annealing iterations. In each
-iteration, \texttt{schedule(dynamic,1)} assigns a batch to an available worker.
-The worker scores every wire in the batch, keeps route changes in a private
-\texttt{RouteUpdate} vector, and commits its changes only after all wires in
-that batch have chosen their routes. Each commit atomically decrements the old
-route and atomically increments the new route in both occupancy views. Atomic
-loads are used while scoring, so an overlapping commit cannot create a C++ data
-race with a reader. The implicit barrier at the end of the \texttt{omp for}
-ensures every commit in an iteration has finished before the next iteration
-begins.
-
-This design deliberately permits the staleness specified by the assignment:
-a candidate may have been scored before another batch commits. It introduces no
-additional staleness beyond the chosen batch structure, and it preserves the
-final occupancy invariant because every changed route is removed and inserted
-exactly once. The validator checks this invariant after every benchmark run.
-Dynamic one-batch scheduling was retained because wires have heterogeneous
-bounding boxes and hence heterogeneous candidate counts. A guided-scheduling
-experiment on GHC gave a medium-input eight-thread median of 1.283~s versus an
-earlier dynamic median of 1.290~s, a difference too small to distinguish from
-run-to-run variation; abundant-input guided trials were also noisy. The
-experiment was reverted rather than treating a sub-percent difference as a
-reliable optimization.
-
-\paragraph{A-mode old-route overlap metadata.}
-Leaving the old wire in A-mode occupancy makes naive scoring expensive if every
-candidate cell asks whether it lies on the old route. The final scorer first
-normalizes the old wire into at most four segments. For each candidate segment,
-it computes a constant-size list of parallel overlaps and perpendicular
-crossings, clips those intervals to the candidate, sorts and merges them, then
-walks each cell exactly once. This moves geometric membership checks out of the
-inner cell loop. It does not omit route cells or reuse scores. A scoring-only
-diagnostic reduced the original atomic-plus-membership-check case from 1.63~s
-to 0.428~s on the measured local workload, motivating this optimization. Later
-GHC profiles still attributed approximately 97\% of A-mode cycles to the final
-candidate-score function, so score computation remains the appropriate
-explanation for the remaining A-mode cost rather than OpenMP scheduling.
-
-\paragraph{Rejected single-thread A fast path.}
-We temporarily removed A-mode atomic occupancy operations when only one thread
-was requested. It preserved validation and output cost, but changed aggregate
-cycles by only about 1.5\% in a GHC \texttt{perf stat} comparison. The added
-code complexity was not justified, so the experiment was reverted. This result
-also indicates that the remaining serial A-mode gap is not primarily an
-uncontended atomic-operation problem.
-
-\subsection{PSC methodology}
-
-We ran a single complete experiment set on a dedicated Bridges-2 Regular
-Memory node, not a shared or login node. The Slurm job rebuilt the program with
-\texttt{make -B} on the allocated node and used \texttt{OMP\_PLACES=cores} and
-\texttt{OMP\_PROC\_BIND=close}. It measured all three timing inputs, both
-parallel modes, and 1, 2, 4, 8, 16, 32, 64, and 128 threads. Each configuration
-used $P=0.1$, five annealing iterations, and $B=1$, and was repeated three
-times. The complete matrix contains three inputs, two modes, eight thread
-counts, and three trials, for 144 runs. All 144 runs printed
-\texttt{Validate Passed: no mismatches.} The raw trials,
-per-trial total times, and derived medians are preserved in
-\texttt{PSC\_BENCHMARK\_48936839\_RAW.csv} and
-\texttt{PSC\_BENCHMARK\_48936839\_SUMMARY.csv}.
-
-For each input/mode/thread-count point, we report the median of three trials.
-Computation time is the router's reported computation interval. Total time for
-one trial is initialization plus computation, and total-speedup uses the median
-of those per-trial totals. This is preferable to adding independently rounded
-medians. Each speedup uses the corresponding one-thread result for the same
-input and mode:
-\[
-S_p^{\mathrm{compute}}=\frac{C_1}{C_p},\qquad
-S_p^{\mathrm{total}}=\frac{T_1}{T_p}.
-\]
-
-\subsection{PSC median computation times}
+\subsection{Speedup graphs}
 
 Table~\ref{tab:psc-compute} lists the median computation time in seconds. It
-is the source table for the computation-speedup plots to be added in the final
-edit. The results make the workload distinction clear: A-mode exposes many
-wires to the machine at once and keeps scaling on the medium and abundant
-inputs, whereas W-mode has only one current wire's candidate set available.
+is the source table for the computation-speedup curves in
+Figure~\ref{fig:psc-speedups}. 
 
 \begin{table}[!htbp]
 \centering
@@ -582,8 +316,6 @@ Threads & Few W & Few A & Medium W & Medium A & Abundant W & Abundant A \\
 configuration. Every run passed validation.}
 \label{tab:psc-compute}
 \end{table}
-
-\subsection{PSC computation and total speedup}
 
 \begin{table}[!htbp]
 \centering
@@ -641,40 +373,35 @@ larger pool of concurrent wires on the medium and abundant inputs.}
 \label{fig:psc-speedups}
 \end{figure}
 
-\subsection{Interpretation and comparison with the reference}
+\clearpage
+\subsection{Discussion of speedup results}
 
 At eight threads, both modes scale well for every input: W obtains computation
 speedups of $7.81\times$, $7.30\times$, and $6.43\times$ for few, medium, and
 abundant inputs, while A obtains $8.45\times$, $8.56\times$, and
-$8.47\times$. The slight superlinear values for A at eight threads should not
-be treated as evidence that more than eight cores of work occurred; they are
-consistent with normal run-to-run variation and cache/work-distribution effects
-relative to the selected one-thread median.
+$8.47\times$. One possible explanation for the super linear speed up is much better 
+cache hits compared to the single thread version.
 
 The two strategies diverge at high core counts. W peaks at 64 threads on few
 and medium, and at 32 threads on abundant, before flattening or regressing.
 For medium and abundant inputs, candidate searches for individual wires cannot
 always supply enough balanced work to amortize repeated parallel-region and
-barrier costs. The abundant W-mode 128-thread trials also had larger variation
-than the rest of the PSC dataset, so the 128-thread median should be reported
-with caution rather than over-interpreted.
+barrier costs. 
 
 A-mode instead reaches $96.36\times$ computation speedup on medium and
 $107.60\times$ on abundant at 128 threads. These results are consistent with
 A-mode's larger pool of concurrently selectable wires. Few-input A-mode levels
 off around 32 threads because only 128 wires are available and the fixed
-initialization cost becomes a larger fraction of total time. The total-speedup
-table makes that serial-initialization effect explicit: for example, medium
+initialization cost becomes a larger fraction of total time. However, medium
 A-mode falls from $96.36\times$ computation speedup to $86.72\times$ total
-speedup at 128 threads.
+speedup at 128 threads because initialization remains largely serial and becomes
+a substantial fraction of the increasingly short end-to-end runtime.
 
 Table~\ref{tab:reference-one-thread} compares our PSC one-thread computation
 medians with the handout's good-performance reference. W-mode is close to the
 reference on few and medium and is slower on abundant. A-mode's one-thread
 time is higher than the reference, even though its high-core-count scaling is
-strong. Speedup therefore must be read together with absolute computation time:
-a slower one-thread baseline can inflate a relative speedup. This is one reason
-we report both tables and preserve the raw measurements.
+strong.
 
 \begin{table}[!htbp]
 \centering
@@ -693,41 +420,65 @@ good-performance reference.}
 \label{tab:reference-one-thread}
 \end{table}
 
-\subsection{Comparison with GHC}
+\subsection{Comparison with GHC results}
 
 At eight workers, GHC W-mode speedups are $7.70\times$, $7.20\times$, and
 $5.95\times$ for few, medium, and abundant inputs, compared with PSC values of
-$7.81\times$, $7.30\times$, and $6.43\times$. The same qualitative limit is
-visible on both systems: within-wires exposes candidates of only one wire at a
+$7.81\times$, $7.30\times$, and $6.43\times$. Within-wires exposes candidates of only one wire at a
 time, so increasingly large teams eventually encounter insufficient work,
-barriers, and shared-occupancy traffic. PSC retains a modest advantage for
-abundant W at eight threads, but neither platform makes W ideal at large
-machine sizes.
+barriers, and shared-occupancy traffic. 
 
 For A mode, GHC eight-worker speedups are $7.35\times$, $6.88\times$, and
 $6.40\times$, whereas PSC reports $8.45\times$, $8.56\times$, and
-$8.47\times$. PSC's lower one-thread A performance makes its relative speedup
-somewhat more favorable, so this comparison is not solely a property of the
-parallel schedule. Still, the PSC 128-thread curves demonstrate the key
-algorithmic difference: multiple selectable wires keep far more independent
-work available than W mode, especially on medium and abundant inputs. We
-therefore use GHC to study cache and eight-worker behavior and PSC to expose
-the high-core-count scalability limit.
+$8.47\times$. The PSC curves show the benefit of parallelizing across wires:
+instead of exposing only one wire's candidate routes at a time, A mode gives
+workers a shared pool of selectable wires. The medium and abundant inputs have
+enough independent wire work to continue scaling through 128 threads, unlike W
+mode, which plateaus earlier. The exception is the few test, with only 128 wires, it levels off around 32 threads as there aren't enough wires to saturate the rest of the threads
 
 \FloatBarrier
-\section{Final GHC Evaluation}
+}
+
+\section{Routing Output}
+\label{sec:routing-output}
+
+Figures 1 and 2 show the required
+medium-input routing output on eight GHC workers. 
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.47\textwidth]{code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_W_wire_plot.png}
+\hfill
+\includegraphics[width=0.47\textwidth]{code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_A_wire_plot.png}
+\caption{Medium-input routing output at eight GHC workers: within-wires (left)
+and across-wires (right).}
+\label{fig:ghc-routes}
+\end{figure}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.47\textwidth]{code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_W_occupancy.png}
+\hfill
+\includegraphics[width=0.47\textwidth]{code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_A_occupancy.png}
+\caption{Graphical occupancy matrices for the same medium-input eight-worker
+runs: within-wires (left) and across-wires (right). White, blue, red, and
+purple denote occupancy 0, 1, 2, and 3, respectively.}
+\label{fig:ghc-occupancy}
+\end{figure}
+
+\clearpage
+\section{Experimental Results from the GHC Machines}
 \label{sec:ghc-final}
 
 We collected the final GHC data on \texttt{ghc39} with \texttt{OMP\_PLACES=cores}
 and \texttt{OMP\_PROC\_BIND=close}. Every configuration used $P=0.1$, five
 annealing iterations, and A-mode batch size one unless a sensitivity experiment
 explicitly varied $P$. Each timing configuration was run three times and the
-tables use the median initialization and computation times. Every one of the
-128 timed routing executions and all 24 counter executions passed the supplied
-validator. The raw, labeled program and \texttt{perf} output is preserved in
-\texttt{code/benchmark\_results/ghc\_remaining\_20261008\_193845/full.log}.
+tables use the median initialization and computation times.
 
-Table~\ref{tab:ghc-final-compute} reports final computation medians. W is
+\subsection{Speedup graphs}
+
+Table 2 reports final computation medians. W is
 slightly faster than A at one thread for medium and abundant inputs because it
 uses ordinary occupancy reads after removing its current wire. A instead uses
 atomic reads so that concurrent batch commits remain data-race free. Both modes
@@ -786,14 +537,13 @@ for its input and mode; the dashed line is ideal linear scaling.}
 \label{fig:ghc-speedups}
 \end{figure}
 
+\clearpage
 \subsection{Cache-miss measurements}
 
 For each core configuration we also ran \texttt{perf stat -e cache-misses}.
 The counter covers the entire OpenMP process, so its reported total includes all
 workers. The assignment's arithmetic mean per-worker value is therefore total
-misses divided by the requested worker count. These are single representative
-counter runs rather than three-run medians and should be interpreted as
-descriptive hardware-counter observations, not as a second timing experiment.
+misses divided by the requested worker count. 
 
 \begin{table}[!htbp]
 \centering
@@ -831,21 +581,42 @@ arithmetic mean misses per requested worker (total divided by thread count).}
 \label{fig:ghc-cache}
 \end{figure}
 
-The dual occupancy layout makes both horizontal and vertical scans contiguous,
-which keeps A-mode aggregate cache misses nearly flat as workers increase.
-W's aggregate misses rise on medium and abundant inputs because candidate
-scoring repeatedly rereads the shared occupancy arrays in separate per-wire
-parallel searches. Nevertheless, per-worker misses decline strongly with
-threads in both modes. This supports the measured speedups, while also helping
-explain why abundant W does not approach the ideal eightfold speedup.
+\clearpage
+The main surprise is that A-mode aggregate cache misses stay nearly flat as
+threads increase: on medium input they change from 28.87 million at one thread
+to 29.42 million at eight, and on abundant input they change from 120.34 to
+117.89 million. We expected concurrent atomic reads and updates to nearby
+occupancy cells to create more contention and possible false sharing, which intuitively would increase the number of cache misses. 
+In contrast, W-mode aggregate misses rise on
+the medium and abundant inputs, consistent with its repeated rereading of the
+shared occupancy arrays during separate per-wire searches.
 
-\subsection{A-mode sensitivity studies and output}
+\FloatBarrier
+\section{Sensitivity Studies on the GHC Machines}
+
+\subsection{Sensitivity to the probability of choosing a random route}
 
 The required A-mode probability sweep on medium input was stable: computation
 speedup at eight threads was $7.39\times$ for $P=0.01$, $7.40\times$ for
 $P=0.1$, and $7.39\times$ for $P=0.5$. Higher $P$ reduces absolute work
 (median one-thread computation times 10.697, 9.750, and 5.504 seconds), but
-does not materially change parallel efficiency.
+does not materially change parallel efficiency. A larger $P$ replaces more
+exhaustive candidate searches with one random-route choice. This probability is
+sampled independently for every wire decision by the worker that owns that
+wire, so all runs both replace roughly the same fraction of
+their expensive searches. The work decreases at both thread counts, leaving
+their speedup ratio nearly unchanged.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.55\textwidth]{figures/ghc_sensitivity_probability.pdf}
+\caption{A-mode medium-input sensitivity to the random-route probability.}
+\label{fig:ghc-sensitivity-probability}
+\end{figure}
+
+\FloatBarrier
+
+\subsection{Sensitivity to problem size}
 
 For the problem-size studies, eight-thread A-mode speedups were $7.20\times$,
 $6.39\times$, and $7.36\times$ for grid dimensions 512, 2048, and 8192.
@@ -853,38 +624,22 @@ With 256, 1024, and 4096 wires on the 2048 grid, they were $7.39\times$,
 $7.27\times$, and $6.38\times$, respectively. Thus A mode generally has
 enough independent wire work to scale well at eight workers; the largest
 wire-count case shows the expected loss from greater occupancy interference.
+The grid-size trend is not monotonic because larger grids simultaneously change
+the candidate work per wire and the occupancy working set. In contrast, adding
+more wires directly creates more concurrent atomic accesses to the same
+occupancy matrix, making the decline at 4096 wires consistent with increased
+contention.
 
 \begin{figure}[!htbp]
 \centering
-\includegraphics[width=0.98\textwidth]{figures/ghc_sensitivity.pdf}
-\caption{Required A-mode GHC sensitivity studies. Dashed lines mark ideal
+\includegraphics[width=0.94\textwidth]{figures/ghc_sensitivity_problem_size.pdf}
+\caption{A-mode problem-size sensitivity. The dashed line marks ideal
 eight-thread speedup.}
-\label{fig:ghc-sensitivity}
+\label{fig:ghc-sensitivity-problem-size}
 \end{figure}
 
-Figure~\ref{fig:ghc-routes} gives the required eight-thread medium-input
-routing output for both modes. Both passed validation; their final costs differ
-slightly because legal equal-cost route choices can be schedule dependent.
-
-\begin{figure}[!htbp]
-\centering
-\includegraphics[width=0.47\textwidth]{code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_W_wire_plot.png}
-\hfill
-\includegraphics[width=0.47\textwidth]{code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_A_wire_plot.png}
-\caption{Medium-input routing output at eight GHC workers: within-wires (left)
-and across-wires (right).}
-\label{fig:ghc-routes}
-\end{figure}
-
-\begin{figure}[!htbp]
-\centering
-\includegraphics[width=0.47\textwidth]{code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_W_occupancy.png}
-\hfill
-\includegraphics[width=0.47\textwidth]{code/benchmark_results/ghc_remaining_20261008_193845/visuals/medium_A_occupancy.png}
-\caption{Graphical occupancy matrices for the same medium-input eight-worker
-runs: within-wires (left) and across-wires (right). White, blue, red, and
-purple denote occupancy 0, 1, 2, and 3, respectively.}
-\label{fig:ghc-occupancy}
-\end{figure}
+\clearpage
+\section{Experimental Results from the PSC Machines}
+\PSCResults
 
 \end{document}

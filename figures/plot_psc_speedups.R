@@ -13,10 +13,10 @@ data <- read.csv(summary_path, comment.char = "#")
 
 threads <- c(1, 2, 4, 8, 16, 32, 64, 128)
 input_names <- c("few", "medium", "abundant")
-input_labels <- c("Few wires", "Medium wires", "Abundant wires")
+input_labels <- c("Few input", "Medium input", "Abundant input")
 colors <- c("#0072B2", "#E69F00", "#009E73")
 
-draw_panel <- function(mode, metric, title, show_legend = FALSE) {
+draw_panel <- function(mode, metric, title) {
   panel <- data[data$mode == mode, ]
   y_max <- max(panel[[metric]], threads) * 1.08
   plot(threads, threads, type = "n", log = "x", xaxt = "n", ylim = c(0, y_max),
@@ -30,16 +30,14 @@ draw_panel <- function(mode, metric, title, show_legend = FALSE) {
     lines(values$threads, values[[metric]], type = "b", pch = 16, lwd = 1.8,
           col = colors[i])
   }
-  if (show_legend) {
-    legend("topleft", c(input_labels, "Ideal speedup"), col = c(colors, "black"),
-           lty = c(1, 1, 1, 2), pch = c(16, 16, 16, NA), bty = "n", cex = 0.78)
-  }
+  legend("topleft", c(input_labels, "Ideal speedup"), col = c(colors, "black"),
+         lty = c(1, 1, 1, 2), pch = c(16, 16, 16, NA), bty = "n", cex = 0.68)
 }
 
 render <- function(open_device) {
   open_device()
   par(mfrow = c(2, 2), mar = c(4.6, 4.2, 2.5, 0.8), oma = c(0, 0, 0, 0))
-  draw_panel("W", "computation_speedup", "Within-wires: computation speedup", TRUE)
+  draw_panel("W", "computation_speedup", "Within-wires: computation speedup")
   draw_panel("A", "computation_speedup", "Across-wires: computation speedup")
   draw_panel("W", "total_speedup", "Within-wires: total speedup")
   draw_panel("A", "total_speedup", "Across-wires: total speedup")

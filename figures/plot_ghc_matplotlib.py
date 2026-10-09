@@ -24,3 +24,24 @@ fig,axs=plt.subplots(1,3,figsize=(10,3.5))
 for ax,x,y,title,xlabel in zip(axs,[[.01,.1,.5],[512,2048,8192],[256,1024,4096]],[[7.394,7.398,7.387],[7.199,6.390,7.362],[7.392,7.272,6.382]],['Random-route probability','Grid-size sweep','Wire-count sweep'],['P','Grid dimension','Number of wires']):
  ax.plot(x,y,'o-',color='black'); ax.axhline(8,ls='--',color='gray'); ax.set(ylim=(0,8.5),title=title,xlabel=xlabel,ylabel='8-thread computation speedup')
 save(fig,'ghc_sensitivity')
+
+fig,ax=plt.subplots(figsize=(4.6,3.4))
+ax.plot([.01,.1,.5],[7.394,7.398,7.387],'o-',color='black')
+ax.axhline(8,ls='--',color='gray',label='Ideal')
+ax.set(ylim=(0,8.5),xlabel='P',ylabel='8-thread computation speedup',title='Random-route probability')
+ax.legend()
+save(fig,'ghc_sensitivity_probability')
+
+fig,axs=plt.subplots(1,2,figsize=(7.8,3.4))
+for ax,x,y,title,xlabel in zip(
+    axs,
+    [[512,2048,8192],[256,1024,4096]],
+    [[7.199,6.390,7.362],[7.392,7.272,6.382]],
+    ['Grid-size sweep','Wire-count sweep'],
+    ['Grid dimension','Number of wires'],
+):
+    ax.plot(x,y,'o-',color='black')
+    ax.axhline(8,ls='--',color='gray',label='Ideal')
+    ax.set(ylim=(0,8.5),title=title,xlabel=xlabel,ylabel='8-thread computation speedup')
+axs[0].legend()
+save(fig,'ghc_sensitivity_problem_size')
